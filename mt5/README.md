@@ -87,6 +87,67 @@ Both were my errors, not logic problems. The EA now caches ATR handles rather th
 
 ---
 
+## Which symbol to test — and in what order
+
+Two different questions, two different symbols. Don't conflate them.
+
+### Test 1 — "does the EA work?" → **EURUSD, M15**
+
+Not because EURUSD is the best place to trade this model, but because it is the best place to find *bugs*:
+
+| Reason | Why it matters here |
+|---|---|
+| **Deepest history** | Most brokers hold 10+ years of M15 EURUSD; exotics often have 1–2. You need years, not months (see §Expected trade frequency) |
+| **Tightest spread** | The EA rejects on `InpMaxSpreadPoints` and buffers SL by 1.5 × spread. A wide-spread symbol adds noise to the exact thing you're debugging |
+| **Simplest pip path** | 5 digits, non-JPY → exercises the common branch of `PipSize()` only |
+| **Familiar behaviour** | You can eyeball a chart and tell whether the EA *should* have taken a trade. That is the fastest debugging loop there is |
+
+**Purpose:** confirm the 9 rules fire, the rejection funnel reports sensibly, and the cooldown wiring logs correctly. A strategy verdict from EURUSD alone means little.
+
+### Test 2 — "does the strategy have edge?" → **GBPJPY, then EURJPY**
+
+This is the important one, and for a specific reason: **you chose 1:3 exits.** A 1:3 target needs *room to move*. A tightly-ranging pair will produce structurally-correct setups whose targets are never reached, and the results will look like a broken strategy when the model was fine.
+
+| Pair | Why |
+|---|---|
+| **GBPJPY** | Highest ATR of the common pairs — the range exists for 3R to be reachable. Also exercises the **3-digit JPY pip branch**, which is a code path EURUSD never touches |
+| **EURJPY** | Same argument, slightly tamer. Good cross-check |
+| **GBPUSD / AUDUSD** | Mid-ATR, sensible second wave |
+| **EURUSD** | Include for completeness — and expect the weakest results, because it is the most efficient, most-arbitraged price in FX |
+| **EURGBP** | ⚠️ **Avoid for the first pass.** Very low ATR; a 3R target from a structural stop frequently sits outside the weekly range. Tight spread, wrong instrument for this exit model |
+
+### The magic-number trap when testing several charts
+
+This one will quietly ruin your data. `CountTradesToday()`, `CountOpenPositions()` and the P&L accumulator filter by **magic number only — not by symbol**. So with the default `InpMagic` on 12 charts:
+
+| Running | Daily cap means |
+|---|---|
+| **1 chart** | 3 trades/day **for that pair** |
+| **12 charts, same magic** | 3 trades/day **in total, across all 12 pairs** |
+
+Same applies to `InpMaxConcurrent` (2 total, not 2 per pair) and to the cooldown ladder, which aggregates losses across every chart into one shared 15%/35% anchor.
+
+**That aggregation is correct for production** — it is portfolio-level risk, exactly what you want. But it is wrong for *measuring* a pair:
+
+| Goal | Use |
+|---|---|
+| Measure a single pair's edge | **Unique `InpMagic` per chart** (e.g. `20261025` + pair index). Each pair gets its own cap and its own cooldown anchors |
+| Forward-test as production will run | **Shared magic.** Accept 3/day total and portfolio cooldowns |
+
+For Strategy Tester work, run **one pair per run** — each tester run is isolated anyway, so the magic only matters for optimisations that reuse the terminal.
+
+### Tester settings that matter
+
+| Setting | Value |
+|---|---|
+| Chart / Period | **M15** — the EA's decision timeframe. It pulls D1 and H1 itself |
+| Modelling | **Every tick based on real ticks** for verdicts; "1 minute OHLC" only for fast iteration |
+| Date range | 3 years minimum on EURUSD; 5+ if your broker has it |
+| Spread | Set it explicitly. "Current" or a raw-spread default will flatter the results — real M15 trading at 21:00 UTC is much wider |
+| Symbol name | Broker-specific (`EURUSD`, `EURUSD.raw`, `EURUSDm`…). The EA uses the chart symbol, so any naming works — but **history quality follows the name**, and suffix variants often have shorter history |
+
+---
+
 ## Rule mapping
 
 | Checklist rule | Where in the EA | Notes |
