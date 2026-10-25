@@ -78,6 +78,34 @@ Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 
 Three presets ship in `mt5/presets/`. Load one via **Inputs tab → Load**, apply, then press Start. Loading a preset overwrites the whole Inputs tab, which is exactly why it exists — it removes the "I changed InpDryRun and it didn't take" failure mode.
 
+### If you cannot find the "Load" button
+
+Some MT5 builds hide the preset buttons. Three ways in, easiest last:
+
+1. **Context menu** — right-click anywhere in the Inputs table -> **Load**. This works on every build and is the most reliable route.
+2. **Top strip of the Inputs tab** — a small folder icon (Load) and disk icon (Save), sometimes only drawn when the panel is wide enough. Widen the tester window if that strip looks empty.
+3. **Skip the preset entirely** — use the manual path below. Three fields, and it cannot fail silently.
+
+The Load dialog opens in `MQL5\Profiles\Tester\`, so copy the presets there first (or browse to `MQL5\Presets\` from the dialog):
+
+```
+Terminal -> File -> Open Data Folder -> MQL5 -> Profiles -> Tester
+```
+
+### Manual path — the three fields that matter
+
+If the preset will not load, change only these three in the Inputs tab. Everything else stays at its compiled default, which is already correct for RUN A.
+
+| Input | Default | Set to |
+|---|---|---|
+| `InpDryRun` | `false` | **`true`** |
+| `InpERMin` | `0.30` | **`0.2`** |
+| `InpMinSLPips` | `8.0` | **`12.0`** |
+
+Type `InpERMin` as **`0.2`** with a dot, not `0,2` — a comma decimal separator will be rejected or misread.
+
+Then apply the change and confirm with the three Journal lines below. The route you take matters less than the verification: if `ref 500.00` and a non-zero `ATR14` appear, the settings applied.
+
 ### Tester Settings tab — RUN A (funnel)
 
 | Field | Value |
