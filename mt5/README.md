@@ -141,7 +141,7 @@ For Strategy Tester work, run **one pair per run** — each tester run is isolat
 | Setting | Use | Why |
 |---|---|---|
 | Symbol | `EURUSD` | Deepest history, tightest spread (see above) |
-| Period | **M15** | The EA's decision timeframe. It pulls D1 and H1 itself |
+| Period | **M15** — not H1, not "whatever looks better" | See below — this is not cosmetic |
 | Date | **5+ years if available**, 3 years minimum | At 1:3 with these filters, 2 years may yield too few trades to judge |
 | Modelling | **Every tick based on real ticks** | "Every tick" is generated from M1 bars; real ticks capture intra-bar SL/TP order |
 | Delays | **Random delay** | "Zero latency, ideal execution" is optimistic — it assumes your stop fills at the exact price |
@@ -149,6 +149,15 @@ For Strategy Tester work, run **one pair per run** — each tester run is isolat
 | Leverage | 1:100 | Irrelevant at 0.01 lots, but keep it realistic |
 | Optimization | Disabled | Never optimise before the funnel has been read |
 | **"Profit in pips for faster calculations"** | **UNCHECK** | See warning below |
+
+### Why the chart period must be M15
+
+The EA pulls its own D1 and H1 data via `CopyRates()`, so it *looks* like the chart period shouldn't matter. It does, for two reasons:
+
+1. **Tick generation is coupled to the chart period** in every modelling mode except "real ticks". In "1 minute OHLC" and plain "Every tick", the tester synthesises ticks from the chart timeframe's bars. On an H1 chart that means the EA sees roughly four tick clusters per hour instead of a continuous stream — and its **M15 bar-close gate** (`iTime(_Symbol, PERIOD_M15, 0)`) fires on a schedule that no longer matches the data underneath it.
+2. It removes all ambiguity about which timeframe is "the" decision timeframe, in the tester, in visual mode, and when you compare against the Python engine later.
+
+With **"Every tick based on real ticks"** an H1 chart would *probably* still behave, since ticks come from the tick database. But a 5-year run is the wrong place to find out. Set M15 and the question disappears.
 
 ### ⚠️ Do not leave "profit in pips" checked
 
@@ -158,6 +167,12 @@ That option makes the tester compute P&L in pips instead of account currency. Tw
 2. Every risk number in these docs — 15% = ~25 losing trades at $500, etc. — assumes currency P&L.
 
 Uncheck it. If the run is too slow, shorten the date range instead of degrading the accounting.
+
+### Broker symbol suffixes (`EURUSDm`, `EURUSD.raw`, `EURUSD.bo`…)
+
+The EA uses the chart symbol, so any name works — but **history quality follows the name**. Suffix variants are often the broker's "standard" account feed with shallower history and a wider spread than the raw/ECN feed.
+
+After the run, look at **History quality** in the tester report. Above ~99% is good; anything in the 80s means gaps in the tick data, and the backtest is partly fiction. If you have both `EURUSD` and `EURUSDm`, check which one has deeper history before committing to a 5-year run.
 
 ### Two runs, in this order
 
