@@ -106,7 +106,65 @@ Implementation decisions I had to make, stated for the record:
 2. **It contradicts the PRD by ~9×.** `RSK-08` (the equity brake) is **4%**. This cooldown sits at 35% — meaning the EA can lose nearly nine times what the PRD considers an emergency before anything stops it. The PRD's L1–L5 breaker stack (daily loss halt 3%, streak pause, 4% equity brake) is **not implemented in the EA at all**; D-19 is not a substitute for it.
 3. **At 1:3 with ~30% winners, a 35% drawdown is plausible in normal operation.** Sequences of 8–10 consecutive losers happen routinely at 30% win rate (expect one in roughly every 30–60 trades). At 0.01 lots on a $500 account (~0.6% risk/trade), 10 straight losses ≈ −6%. So on a small account the cooldown is comfortably far; but if you ever raise lot size, the same streak becomes far more expensive **while the 35% trigger stays fixed in percentage** — the trigger does not scale with lot size.
 
-**Recommendation, if you want one:** keep 35% as the absolute backstop, and add a *second, lower* threshold — e.g. 15% — that pauses for 24 h without flattening. Two-stage is how you get "stop and think" without waiting for catastrophe. Say the word and I will add it; it is ~20 lines reusing the same machinery.
+**Resolution (implemented 2026-10-25):** the two-stage ladder was added — see §0i.
+
+---
+
+## 0i. D-19 two-stage ladder + D-12 post-loss cooldown (implemented)
+
+Approved as the improvement over a single 35% trapdoor. Both are in `mt5/Tradie.mq5`.
+
+### Stage ladder
+
+| Stage | Threshold | Pause | Flatten | Purpose |
+|---|---|---|---|---|
+| **SOFT** | **15%** | **24 h** | no | "Stop and think" — far from ruin, cheap to obey |
+| **HARD** | **35%** | **168 h (7 d)** | **yes** | The absolute backstop; it is a halt, not a pause |
+| **Post-loss (rule 8)** | any realised loss | **30 min** | n/a | Blocks re-entry right after a loss, which is where damage compounds |
+
+SOFT fires first and, because it does not flatten, your open trades keep their broker-side SL/TP. HARD flattens and stops the EA for a week.
+
+### How the staged accounting works
+
+Each stage carries **its own anchor pair** (`refCapital`, `pnlAnchor`) persisted in terminal global variables:
+
+```
+stageLoss% = -((realisedPnL_since_anchor + floatingPnL) / stage.refCapital) × 100
+```
+
+- **`refCapital`** — the balance the stage measures against. Captured on first run; **re-anchored on expiry** to the then-current balance.
+- **`pnlAnchor`** — cumulative realised P&L at the anchor moment. Subtracting it means "loss since the anchor", not "loss since inception".
+
+This is what makes the ladder survive its own triggers: without re-anchoring, a still-unrecovered loss re-arms the stage instantly and forever. With it, repeated losses compound **geometrically** — 100 → 85 → 72 → 61 at 15% steps, and 100 → 65 → 42 → 27 at 35%.
+
+**Both stages exist independently.** A 35% loss triggers HARD even if SOFT is already active; the entry gate reports HARD first.
+
+### Global variables written
+
+| Name | Meaning |
+|---|---|
+| `TRADIE_SOFT_REF_<magic>` / `_PNL_` / `_UNTIL_` / `_MAN_` | SOFT stage anchor + state |
+| `TRADIE_HARD_REF_<magic>` / `_PNL_` / `_UNTIL_` / `_MAN_` | HARD stage anchor + state |
+| `TRADIE_LASTLOSS_<magic>` | Timestamp of the most recent realised loss (survives restart) |
+
+Reset everything with `InpCooldownReset = true` for one restart, or delete the globals manually (Tools → Global Variables, **F3**).
+
+### Rule 8 proxy — the post-loss cooldown
+
+`InpLossCooldownMin = 30`. After **any** realised loss on this EA's trades, no new entry for 30 minutes. Counts exits only (`DEAL_ENTRY_OUT` / `OUT_BY` / `INOUT`), includes swap and commission in "was it a loss", and seeds itself from history on init so a restart does not reset the clock.
+
+**Why this is the better risk control of the two:** it acts on the *behaviour* rule 8 names — re-entering immediately after a loss — rather than waiting for a 15% drawdown. It is also the only part of rule 8 that a machine can genuinely enforce.
+
+### What is still not automated
+
+| Rule 8 clause | Status |
+|---|---|
+| "not emotional" | Structural only — the bot has no discretionary entries |
+| "not forcing trades" | Proxied by the 3/day cap + session window + setup TTL |
+| "not chasing losses" | **Proxied by the 30-min post-loss cooldown** ✅ |
+| Daily operator check-in (`RSK-11`) | **Not in the EA** — needs a human interface; belongs to the Python system |
+
+So rule 8 is now **partially implemented in the EA** rather than absent. The check-in remains out of scope here, and the EA should not be described as implementing all 9 rules because of it.
 
 ---
 

@@ -86,18 +86,22 @@ Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 | 5. Confirmation | `BuildPOI()` + `IsBullEngulf()` | OB ∩ FVG, full-range engulf (D-06, D-08) |
 | 6. Risk management | `CalcLots()`, SL block | SL set on the order before entry (D-07); **fixed 0.01 lots** (D-18), so risk % is an outcome, not a control |
 | 7. Bias alignment | `OnTick()` assertion | Raises on mismatch; never trades (D-01/R7) |
-| 8. Mental state | **Not implemented** | Cannot be automated — see below |
+| 8. Mental state | `LossCooldownActive()` | **Partial** — 30-min post-loss cooldown; daily check-in still absent |
 | 9. Trade limit | `CountTradesToday()` | 3/day + 07:00–16:00 UTC window (D-10) |
 | Exit | `InpRewardRisk` | Fixed 1:3, attached at entry (D-09) |
 
-### Rule 8 — the one rule that isn't in the EA
+### Rule 8 — partially implemented
 
-Your checklist's rule 8 is *"not emotional / not forcing / not chasing losses."* **A bot cannot evaluate this, and an EA that reports it as "passing" would be lying.** In this EA rule 8 is only *partially* present:
+Your checklist's rule 8 is *"not emotional / not forcing / not chasing losses."* **A bot cannot evaluate this, and an EA that reports it as "passing" would be lying.**
 
-- **Structurally satisfied** — no discretionary entries exist
-- **Partly proxied** — the 3-trade cap and the session window limit "forcing" behaviour
+| Clause | How it is handled |
+|---|---|
+| "not emotional" | Structurally satisfied — no discretionary entries exist |
+| "not forcing trades" | Proxied — 3/day cap, session window, setup TTL |
+| "not chasing losses" | **Proxied — 30-min post-loss cooldown (`InpLossCooldownMin`)** |
+| Daily check-in (`RSK-11`) | **Absent** — needs a human interface; belongs to the Python system |
 
-**Not present:** the daily operator check-in and the 30-minute post-loss cooldown (`D-12`). The check-in needs a human interface; the cooldown needs persistent cross-session state. Both belong in the Python system. If you want the cooldown in the EA, it's a small addition — say so.
+So the EA implements **part** of rule 8. It should not be described as running all 9 rules until the check-in exists.
 
 ---
 
@@ -123,29 +127,65 @@ At 30-pip stops ≈ **$3 risk per trade**, so:
 
 **This is the key interaction with the cooldown:** the loss rate is fixed in *currency*, but the trigger is fixed in *percentage*. On a large account the cooldown is effectively unreachable. Read §"The 35% trap" below.
 
-### Capital cooldown (D-19)
+### Capital cooldown — two stages (D-19)
 
-Pauses new entries when **this EA's own** realised + floating P&L reaches **−35%** of reference capital.
+| Stage | Input | Default | Pause | Flatten |
+|---|---|---|---|---|
+| **SOFT** | `InpSoftLossPct` / `InpSoftHours` | **15%** / **24 h** | pause entries | no |
+| **HARD** | `InpCooldownLossPct` / `InpCooldownHours` | **35%** / **168 h** | halt entries | **yes** |
 
-| Input | Default | Meaning |
-|---|---|---|
-| `InpCooldownLossPct` | 35.0 | Trigger threshold (% of reference capital) |
-| `InpCooldownHours` | 168 | Pause length. `0` = halt until you set `InpCooldownReset=true` |
-| `InpCooldownFlatten` | true | Close open EA positions when it triggers |
-| `InpCooldownReanchor` | true | After expiry, measure the next 35% from the *new* balance |
-| `InpCooldownReset` | false | Set `true` once, recompile/restart, to clear a manual halt |
+SOFT is the "stop and think" rung — it stops new entries while your open trades keep their broker-side SL/TP. HARD flattens and stops the EA for a week.
 
-Reference capital is captured **once** on first run and stored in a terminal global variable (`TRADIE_BASE_<magic>`), so a shrinking balance cannot outrun the trigger. Reset it by deleting that global variable (Tools → Global Variables, F3).
-
-When it fires you'll see:
+Both measure **this EA's own** P&L (magic-filtered), realised + floating:
 
 ```
-Tradie D-19 TRIGGERED: EA loss 35.12% >= 35.00% of reference capital 1000.00
-  (realised -341.20 + floating -10.00). Entries paused until 2026-11-01 14:22
-Tradie D-19: flattening open EA positions
+stageLoss% = -((realised_since_anchor + floating) / refCapital) * 100
 ```
 
-While cooling down, entries are skipped with `D-19: cooldown until ...` in the journal. **Friday flatten and existing SL/TP keep working** — the cooldown blocks new entries, it does not stop position management.
+Each stage keeps its own **anchor** (reference capital + cumulative realised P&L at that moment), persisted in terminal global variables. On expiry the anchor moves to the then-current balance, so the next threshold is measured from there. Without that, a still-unrecovered loss would re-arm the stage instantly and forever.
+
+```
+Tradie D-19[SOFT] TRIGGERED: loss 15.31% >= 15.0% of ref capital 2000.00
+  (realised since anchor -306.20, floating 0.00). Paused for 24h until 2026-10-26 14:22
+```
+
+### Post-loss cooldown — rule 8 (D-12)
+
+`InpLossCooldownMin = 30`. After **any** realised loss, no new entry for 30 minutes.
+
+```
+Tradie: D-12/R8: post-loss cooldown, 27 min remaining - no new entries
+```
+
+This is arguably the most useful of the three: it acts on the behaviour rule 8 actually names — re-entering straight after a loss — instead of waiting for a drawdown. It counts exits only, includes swap/commission in deciding what a "loss" is, and seeds itself from history on restart so the clock doesn't reset.
+
+### Resetting the cooldowns
+
+| Action | How |
+|---|---|
+| Clear everything (soft, hard, post-loss) | Set `InpCooldownReset = true`, restart, set it back to `false` |
+| Clear just the anchors | Tools → Global Variables (**F3**) → delete `TRADIE_SOFT_*` / `TRADIE_HARD_*` / `TRADIE_LASTLOSS_*` |
+| Disable stage 1 | `InpSoftEnabled = false` |
+
+⚠️ **Validation rule:** `InpSoftLossPct` must be **below** `InpCooldownLossPct`. The EA refuses to start otherwise — stage 1 firing after stage 2 would be meaningless.
+
+### Still a backstop, not a risk system
+
+The ladder improves on a single 35% trapdoor, but read the numbers:
+
+- After **−35%** you need **+53.8%** to recover. After two: **−57.75%**, needing **+137%**.
+- The PRD's emergency equity brake (`RSK-08`) is **4%**. The HARD rung is ~9× looser.
+- The EA still implements **none** of the PRD's L1–L5 breaker stack — no 3% daily halt, no loss-streak pause. The 30-minute post-loss rule is a *partial* substitute for the streak breaker, not a full one.
+
+**Where these fire depends on your lot size.** At 0.01 lots risk is ~$3/trade, fixed in currency while the thresholds are fixed in percentage:
+
+| Balance | Risk/trade | 15% (SOFT) | 35% (HARD) |
+|---|---|---|---|
+| $500 | ~0.6% | ~25 losing trades | ~55 |
+| $2,000 | ~0.15% | ~100 | ~230 |
+| $10,000 | ~0.03% | ~500 | ~1,100 |
+
+On a large test account the ladder is effectively unreachable. **The 30-minute post-loss rule is the one that will actually fire** — which is the right outcome, but worth knowing before you conclude the ladder is working.
 
 ### ⚠️ The 35% trap
 
@@ -188,15 +228,17 @@ At an estimated 0.05–0.15 setups/pair/day *after* OB∩FVG and 1:3 filtering, 
 
 ## Known limitations (deliberate, documented rather than hidden)
 
-1. **No persistence of setup state.** Reloading the EA or changing timeframe resets any in-progress setup. Fine for the tester; the production engine persists setups (INV-10).
-2. **`D-14` (ranking two competing setups) is not implemented** — that requires a multi-symbol instance. Single-symbol-per-chart makes it moot.
-3. **`D-15` sticky setup is implemented**, but "recording" a superseded sweep means a `Print` to the Journal, not a durable journal row.
-4. **No news blackout.** `RSK-09` needs an external calendar; the tester can't supply one.
-5. **No currency-exposure cap.** `RSK-04` is portfolio-level and needs all pairs in one process.
-6. **The cooldown does not prevent losses, only repeats.** It cannot foresee a drawdown, and it is measured on this EA's trades only.
-7. **Server-time offset is auto-detected** from `TimeTradeServer() - TimeGMT()`. **Verify it in the Journal on the first run** — if the session filter looks wrong, that line is why. In the tester the offset may report 0; set `InpAutoGMTOffset=false` and `InpGMTOffsetHours` to your broker's true offset (commonly +2 or +3).
-8. **`input group` headers** require MetaEditor build 2650+ (2020). If your build is older, delete the `input group` lines.
-9. **Spread** comes from your broker's tester settings. A backtest on raw-spread "every tick" data will look better than a demo account at 18:00 UTC. Set a realistic spread.
+1. **`InpCooldownReanchor` is retained but inert** — stages always re-anchor on expiry, because not doing so makes them re-arm forever.
+2. **Cooldown state lives in terminal global variables**, not in the EA's own file. Deleting them resets the ladder. In the Strategy Tester these persist between runs on the same terminal.
+3. **No persistence of setup state.** Reloading the EA or changing timeframe resets any in-progress setup. Fine for the tester; the production engine persists setups (INV-10).
+4. **`D-14` (ranking two competing setups) is not implemented** — that requires a multi-symbol instance. Single-symbol-per-chart makes it moot.
+5. **`D-15` sticky setup is implemented**, but "recording" a superseded sweep means a `Print` to the Journal, not a durable journal row.
+6. **No news blackout.** `RSK-09` needs an external calendar; the tester can't supply one.
+7. **No currency-exposure cap.** `RSK-04` is portfolio-level and needs all pairs in one process.
+8. **The cooldown does not prevent losses, only repeats.** It cannot foresee a drawdown, and it is measured on this EA's trades only.
+9. **Server-time offset is auto-detected** from `TimeTradeServer() - TimeGMT()`. **Verify it in the Journal on the first run** — if the session filter looks wrong, that line is why. In the tester the offset may report 0; set `InpAutoGMTOffset=false` and `InpGMTOffsetHours` to your broker's true offset (commonly +2 or +3).
+10. **`input group` headers** require MetaEditor build 2650+ (2020). If your build is older, delete the `input group` lines.
+11. **Spread** comes from your broker's tester settings. A backtest on raw-spread "every tick" data will look better than a demo account at 18:00 UTC. Set a realistic spread.
 
 ---
 
