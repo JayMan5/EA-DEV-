@@ -168,6 +168,59 @@ So rule 8 is now **partially implemented in the EA** rather than absent. The che
 
 ---
 
+## 0j. D-05 vs D-08 — the zone and the POI are in different places (UNRESOLVED)
+
+Found by the first backtest (`mt5/README.md` §First backtest results, finding 5). **This needs an owner decision before the rule set can be called faithful.**
+
+### The problem
+
+For a long setup under D-05 option C:
+
+```
+H0 ── prior impulse start (a swing high)
+  \
+   \            R4 zone = 45-55% of H0->L0 ... sits HERE (halfway down)
+    \
+     \
+      L0 ─────── sweep extreme
+        \  ← displacement up
+         \        OB and FVG form just above L0 ... the POI sits HERE
+          M1
+```
+
+The 50% retracement zone and the order-block/FVG POI are separated by roughly **half the leg**. They describe different price areas, so "enter at the 50% retracement with an engulfing confirmation in the POI" cannot be satisfied literally.
+
+Observed in the run: `zone 1.16326–1.16355`, `POI 1.16253–1.16262`, `entry 1.16269` — the entry is **5.7 pips below the zone**.
+
+### What the EA does today
+
+| Step | Behaviour |
+|---|---|
+| R4 | Passes if price **ever touched** the zone before the MSS (`zoneTouched`) |
+| R5 | Requires the engulfing bar to overlap the **POI** |
+| Entry | At the POI — i.e. near the sweep extreme, not at 50% |
+
+That is defensible as *"price retraced at least 50%"*, but it is **not** *"entry at the 50%"*. And because the entry is near the sweep extreme, the stop is tiny (8.5 pips observed) — inside M15 noise.
+
+### Three options
+
+| # | Rule | Consequence | Verdict |
+|---|---|---|---|
+| **A** | Current: 50% must have been touched; entry at POI | Most permissive; tiny stops; entry not at 50% | Current behaviour — **not faithful to "enter at the retracement"** |
+| **B** | Entry must occur **inside the 50% zone**; POI used only as confluence/quality score | Entry at 50%, wider stop (zone → sweep extreme), fewer trades | **Most faithful to the checklist.** Recommend |
+| **C** | POI must **intersect** the 50% zone | Nearly never occurs (structurally separated) | Would produce ~0 trades |
+
+**Recommendation: B.** It restores the checklist's literal rule 4 (enter at the retracement), gives a structurally sane stop, and keeps the OB/FVG work as a quality filter rather than a location. Cost: fewer setups, and the POI becomes a scoring input rather than a gate — which weakens D-08 from "OB and FVG required" to "OB/FVG improves ranking".
+
+**If B is adopted,** `InpRequireOB` / `InpRequireFVG` change meaning: instead of gating, they add a confluence score used in `D-14` ranking. That is a code change of roughly 40 lines.
+
+### Related
+
+- `InpMinSLPips = 8` should rise to **12** regardless of which option is chosen — an 8.5-pip stop on EURUSD is noise.
+- `InpERMin = 0.30` rejected 69.4% of all bars (ER median 0.14, p90 0.26). **0.20** is the better starting point. This was always my number (D-04 was delegated to me), not the owner's.
+
+---
+
 ## 0b. Owner question: "is D-03 about the entry?"
 
 **No.** D-03 is about **which price levels are allowed to be the thing that gets swept** — it is a filter on rule 2 (liquidity sweep), which happens *before* the entry.

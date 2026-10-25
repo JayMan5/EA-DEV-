@@ -74,6 +74,72 @@ Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 
 ---
 
+## First backtest results — EURUSDm, 5 years (2026-10-25)
+
+First real run. **0 trades in the Overview, and that is not a strategy verdict** — see finding 1.
+
+`evaluations=47337 rejections=47329 signals=8 | SOFT 0.00% of 500.00 | HARD 0.00%`
+
+### Finding 1 — the run was still in dry-run mode
+
+The journal contains `Tradie DRY RUN: BUY EURUSDm ...` lines, and zero `Tradie: BUY` lines. `InpDryRun` was never actually applied. **Nothing was sent to the broker**, so the empty equity curve says nothing about the strategy.
+
+When editing tester inputs, change the value **and click OK**, then check the Journal for `Tradie DRY RUN` vs `Tradie: BUY`. If you loaded a `.set` file, it overwrites the Inputs tab.
+
+### Finding 2 — the full 5 years did run
+
+47,337 evaluations ≈ 5 years × ~9,500 in-session M15 bars. The `.txt` journal is only the **last ~1 MB** (it starts 2025-10-15), which is why only 2 of the 8 signals appear in it. Nothing is missing from the test — only from the log file.
+
+### Finding 3 — R3a is the binding constraint (69.4% of all rejections)
+
+| Rule | Rejections | Share |
+|---|---|---|
+| **R3a structure quality** | **6,635** | **69.4%** |
+| R3b no structure shift | 1,225 | 12.8% |
+| R2 no recent sweep | 823 | 8.6% |
+| R4 zone not reached | 510 | 5.3% |
+| R3a swing density | 163 | 1.7% |
+| R2 sweep violated | 168 | 1.8% |
+| R5 no engulfing | 20 | 0.2% |
+| R5 no FVG / OB∩FVG / not in POI | 18 | 0.2% |
+
+**The efficiency-ratio filter is not filtering chop — it is rejecting everything.** Distribution of ER on the rejected bars: median **0.14**, p90 **0.26**, max **0.30**. The threshold sits at the very top of EURUSD's ER distribution, so almost every bar fails before any other rule is even reached.
+
+| If `InpERMin` were | Share of current R3a rejections that would pass |
+|---|---|
+| 0.15 | 48.4% |
+| **0.20** | **31.3%** |
+| 0.25 | 15.6% |
+| 0.28 | 7.4% |
+
+This validates the concern in `decisions.md` §D-04: **0.30 was my judgement number, never measured.** It is too high for EURUSD specifically.
+
+### Finding 4 — 8 signals in 5 years = 1.6/year/pair
+
+Even at 12 pairs that is ~20 trades/year, against a 200-trade minimum for a 1:3 system. **The rule set as configured cannot be validated in a reasonable time on EURUSD.**
+
+### Finding 5 — the 50% zone and the POI are structurally separated
+
+Both signals entered **below** the R4 zone:
+
+```
+signal: zone 1.16326-1.16355 (2.9p)   POI 1.16253-1.16262 (0.9p)   entry 1.16269
+```
+
+The 50% zone sits halfway up the prior impulse; the order block / FVG forms just above the sweep extreme, at the *other end* of that leg. They are naturally ~half a leg apart, so they cannot both be "where the entry happens".
+
+Current behaviour: R4 only checks that price **touched** the zone at some point; the entry then happens at the POI, well below it. That is a defensible reading of "valid retracement" (price retraced *at least* that far) but it is **not** "enter at the 50%". See `decisions.md` §0j for the three options.
+
+Also visible: `SL 8.5 p` — inside EURUSD noise. `InpMinSLPips = 8` is too low; 12–15 is more defensible for M15 stops.
+
+### Recommended next steps, in order
+
+1. **Turn dry run off properly**, re-run EURUSD, confirm `Tradie: BUY` appears.
+2. **Lower `InpERMin` to 0.20** and re-run the dry-run funnel. Compare *signal counts*, not P&L.
+3. **Run GBPJPY** on the same settings. JPY crosses have structurally higher ER; EURUSD is the hardest case for this filter.
+4. **Raise `InpMinSLPips` to 12.** An 8.5-pip stop on EURUSD is noise, not structure.
+5. For funnel work use **"1 minute OHLC"** modelling — the EA is bar-based and never reads ticks. The 24% History Quality in this run is tick gaps, which add runtime cost and inconsistency without improving a bar-driven strategy. Reserve real ticks for the final verdict on good data.
+
 ## Build history
 
 | Date | Issue | Fix |
