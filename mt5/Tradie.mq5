@@ -33,6 +33,12 @@
 //==================================================================
 //  INPUTS
 //==================================================================
+enum ENUM_SIZING_MODE
+  {
+   SIZING_FIXED_LOT      = 0,  // Fixed lot size (D-18)
+   SIZING_RISK_PERCENT   = 1,  // Risk % of balance
+  };
+
 enum ENUM_RETRACE_ANCHOR
   {
    RETRACE_PRIOR_IMPULSE     = 0,  // C: most recent swing -> sweep extreme (RATIFIED)
@@ -43,8 +49,19 @@ input group             "=== Identity ==="
 input long              InpMagic              = 20261025;   // Magic number (shared across charts)
 input bool              InpDryRun             = false;      // Dry run: log signals, send no orders
 
+input group             "=== Sizing (D-18) ==="
+input ENUM_SIZING_MODE  InpSizingMode         = SIZING_FIXED_LOT; // Position sizing mode
+input double            InpFixedLots          = 0.01;       // Fixed lot size per trade
+input double            InpRiskPercent        = 0.75;       // Risk per trade (%) - risk mode only
+
+input group             "=== Capital Cooldown (D-19) ==="
+input double            InpCooldownLossPct    = 35.0;       // Capital loss % that triggers cooldown
+input int               InpCooldownHours      = 168;         // Cooldown length (hours, 0 = manual reset)
+input bool              InpCooldownFlatten    = true;       // Flatten EA positions on trigger
+input bool              InpCooldownReset      = false;      // Set true once to clear a cooldown
+input bool              InpCooldownReanchor   = true;       // On expiry, measure the next 35% from the NEW balance
+
 input group             "=== Risk (R6) ==="
-input double            InpRiskPercent        = 0.75;       // Risk per trade (% of balance)
 input double            InpRewardRisk         = 3.0;        // Target RR (RATIFIED D-09 = 1:3)
 input double            InpMinSLPips          = 8.0;        // Minimum SL distance (pips)
 input double            InpMaxSLATR           = 3.0;        // Max SL as multiple of M15 ATR
@@ -118,6 +135,17 @@ string        g_tag      = "";       // last diagnostic line
 int           g_evaluations = 0;
 int           g_rejections  = 0;
 
+// D-18 / D-19: fixed-lot sizing + capital-loss cooldown
+datetime      g_lastRealizedSync = 0;    // self-heal point for realised P&L
+double        g_baselineCapital = 0.0;   // reference capital, captured once
+double        g_eaRealized      = 0.0;   // realised P&L of THIS magic only
+datetime      g_cooldownUntil   = 0;     // 0 = not cooling down
+bool          g_cooldownManual  = false; // true = needs an explicit reset
+bool          g_cooldownLogged  = false;
+string        g_gvBase          = "";    // global-variable names
+string        g_gvCdUntil       = "";
+string        g_gvCdManual      = "";
+
 // last-traded setup guard (prevents re-firing the same sweep)
 datetime      g_lastTradeBarTime = 0;
 double        g_lastSweepExtreme  = 0.0;
@@ -139,6 +167,14 @@ bool   HasPositionOnSymbol();
 int    CountOpenPositions();
 int    CountTradesToday();
 double CalcLots(double entry, double sl, double &riskMoneyOut);
+void   InitRealizedPnL();
+double EAOpenPnL();
+double EALossPct();
+void   LoadCooldownState();
+void   SaveCooldownState();
+bool   CooldownActive(string &why);
+void   CheckCooldown();
+void   ResetCooldownIfAsked();
 bool   InEntrySession(datetime serverBarTime);
 void   MaybeFlattenFriday();
 bool   SendTrade(int dir, double entry, double sl, double tp, string note);
@@ -564,10 +600,6 @@ int CountTradesToday()
 double CalcLots(double entry, double sl, double &riskMoneyOut)
   {
    riskMoneyOut = 0.0;
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskMoney = balance * InpRiskPercent / 100.0;
-   if(riskMoney <= 0.0)
-      return(0.0);
 
    double slDist = MathAbs(entry - sl);
    if(slDist <= 0.0)
@@ -578,12 +610,25 @@ double CalcLots(double entry, double sl, double &riskMoneyOut)
    if(tickValue <= 0.0 || tickSize <= 0.0)
       return(0.0);
 
+   // money lost per 1.00 lot if the stop is hit
    double lossPerLot = (slDist / tickSize) * tickValue;
    if(lossPerLot <= 0.0)
       return(0.0);
 
-   double lots = riskMoney / lossPerLot;
-   riskMoneyOut = riskMoney;
+   double lots = 0.0;
+
+   if(InpSizingMode == SIZING_FIXED_LOT)
+     {
+      lots = InpFixedLots;
+     }
+   else
+     {
+      double balance   = AccountInfoDouble(ACCOUNT_BALANCE);
+      double riskMoney = balance * InpRiskPercent / 100.0;
+      if(riskMoney <= 0.0)
+         return(0.0);
+      lots = riskMoney / lossPerLot;
+     }
 
    double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
@@ -597,7 +642,177 @@ double CalcLots(double entry, double sl, double &riskMoneyOut)
    if(lots > maxLot)
       lots = maxLot;
 
-   return(NormalizeDouble(lots, 2));
+   lots = NormalizeDouble(lots, 2);
+
+   // report the ACTUAL money at risk at this lot size, whichever mode we used
+   riskMoneyOut = lots * lossPerLot;
+
+   double balance2 = AccountInfoDouble(ACCOUNT_BALANCE);
+   if(balance2 > 0.0)
+      PrintFormat("Tradie sizing: %.2f lots | SL %.1f p | risk %.2f (%.2f%% of balance)",
+                  lots, slDist / g_pip, riskMoneyOut, 100.0 * riskMoneyOut / balance2);
+
+   return(lots);
+  }
+
+//==================================================================
+//  D-19 — capital-loss cooldown
+//  Reference capital is captured ONCE and persists, so the trigger
+//  cannot be outrun by a shrinking balance.
+//==================================================================
+void InitRealizedPnL()
+  {
+   g_eaRealized = 0.0;
+   if(!HistorySelect(0, TimeCurrent() + 86400))
+      return;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagic)
+         continue;
+      g_eaRealized += HistoryDealGetDouble(ticket, DEAL_PROFIT)
+                      + HistoryDealGetDouble(ticket, DEAL_SWAP)
+                      + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+     }
+  }
+
+double EAOpenPnL()
+  {
+   double pnl = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
+         continue;
+      pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+     }
+   return(pnl);
+  }
+
+double EALossPct()
+  {
+   if(g_baselineCapital <= 0.0)
+      return(0.0);
+   double net = g_eaRealized + EAOpenPnL();
+   if(net >= 0.0)
+      return(0.0);
+   return(100.0 * (-net) / g_baselineCapital);
+  }
+
+void LoadCooldownState()
+  {
+   g_cooldownUntil = 0;
+   g_cooldownManual = false;
+
+   if(GlobalVariableCheck(g_gvCdUntil))
+      g_cooldownUntil = (datetime)GlobalVariableGet(g_gvCdUntil);
+   if(GlobalVariableCheck(g_gvCdManual))
+      g_cooldownManual = (GlobalVariableGet(g_gvCdManual) > 0.5);
+  }
+
+void SaveCooldownState()
+  {
+   GlobalVariableSet(g_gvCdUntil, (double)g_cooldownUntil);
+   GlobalVariableSet(g_gvCdManual, g_cooldownManual ? 1.0 : 0.0);
+  }
+
+bool CooldownActive(string &why)
+  {
+   why = "";
+   if(g_cooldownManual)
+     {
+      why = "D-19: cooldown active (manual reset required)";
+      return(true);
+     }
+   if(g_cooldownUntil > 0 && TimeCurrent() < g_cooldownUntil)
+     {
+      why = StringFormat("D-19: cooldown until %s", TimeToString(g_cooldownUntil, TIME_DATE | TIME_MINUTES));
+      return(true);
+     }
+   return(false);
+  }
+
+void ResetCooldownIfAsked()
+  {
+   if(!InpCooldownReset)
+      return;
+   g_cooldownUntil  = 0;
+   g_cooldownManual = false;
+   SaveCooldownState();
+   Print("Tradie D-19: cooldown CLEARED by InpCooldownReset. Set it back to false.");
+  }
+
+void CheckCooldown()
+  {
+   if(g_baselineCapital <= 0.0)
+      return;
+
+   //--- expiry handling (must run BEFORE the trigger test, otherwise the
+   //--- still-unrecovered loss re-triggers forever)
+   if(g_cooldownUntil > 0 && TimeCurrent() >= g_cooldownUntil)
+     {
+      g_cooldownUntil = 0;
+      if(InpCooldownReanchor)
+        {
+         double newBase = AccountInfoDouble(ACCOUNT_BALANCE);
+         if(newBase > 0.0)
+           {
+            PrintFormat("Tradie D-19: cooldown expired. Re-anchoring reference capital %.2f -> %.2f (the next %.0f%% is measured from here; losses compound geometrically)",
+                        g_baselineCapital, newBase, InpCooldownLossPct);
+            g_baselineCapital = newBase;
+            GlobalVariableSet(g_gvBase, g_baselineCapital);
+           }
+        }
+      else
+         Print("Tradie D-19: cooldown expired. Re-anchor disabled - the loss still exceeds the threshold, so the cooldown will re-arm immediately.");
+      SaveCooldownState();
+     }
+
+   double lossPct = EALossPct();
+   bool active = (g_cooldownManual || (g_cooldownUntil > 0 && TimeCurrent() < g_cooldownUntil));
+
+   if(active)
+      return;
+
+   if(lossPct < InpCooldownLossPct)
+      return;
+
+   //--- trigger
+   if(InpCooldownHours > 0)
+      g_cooldownUntil = (datetime)((long)TimeCurrent() + (long)InpCooldownHours * 3600);
+   else
+     {
+      g_cooldownUntil  = 0;
+      g_cooldownManual = true;
+     }
+   SaveCooldownState();
+
+   PrintFormat("Tradie D-19 TRIGGERED: EA loss %.2f%% >= %.2f%% of reference capital %.2f (realised %.2f + floating %.2f). Entries paused %s",
+               lossPct, InpCooldownLossPct, g_baselineCapital,
+               g_eaRealized, EAOpenPnL(),
+               (InpCooldownHours > 0
+                ? ("until " + TimeToString(g_cooldownUntil, TIME_DATE | TIME_MINUTES))
+                : "until manually reset"));
+
+   if(InpCooldownFlatten)
+     {
+      Print("Tradie D-19: flattening open EA positions");
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0)
+            continue;
+         if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
+            continue;
+         g_trade.SetExpertMagicNumber(InpMagic);
+         g_trade.PositionClose(ticket);
+        }
+     }
   }
 
 //==================================================================
@@ -1207,9 +1422,48 @@ int OnInit()
                (InpRequireOB ? "+" : "off"), (InpRequireFVG ? "+" : "off"),
                InpRewardRisk);
 
+   //--- D-18 / D-19 wiring
+   g_gvBase     = StringFormat("TRADIE_BASE_%I64d", InpMagic);
+   g_gvCdUntil  = StringFormat("TRADIE_CD_UNTIL_%I64d", InpMagic);
+   g_gvCdManual = StringFormat("TRADIE_CD_MAN_%I64d", InpMagic);
+
+   if(GlobalVariableCheck(g_gvBase))
+      g_baselineCapital = GlobalVariableGet(g_gvBase);
+   if(g_baselineCapital <= 0.0)
+     {
+      g_baselineCapital = AccountInfoDouble(ACCOUNT_BALANCE);
+      GlobalVariableSet(g_gvBase, g_baselineCapital);
+     }
+
+   ResetCooldownIfAsked();
+   LoadCooldownState();
+   InitRealizedPnL();
+
+   double minLotSym = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(InpSizingMode == SIZING_FIXED_LOT)
+     {
+      PrintFormat("Tradie sizing: FIXED %.2f lots (broker min %.2f)",
+                  InpFixedLots, minLotSym);
+      if(InpFixedLots < minLotSym)
+         PrintFormat("Tradie WARNING: InpFixedLots %.2f is below the symbol minimum %.2f - orders will be raised to the minimum",
+                     InpFixedLots, minLotSym);
+     }
+   else
+      PrintFormat("Tradie sizing: RISK %.2f%% of balance per trade", InpRiskPercent);
+
+   PrintFormat("Tradie D-19: reference capital %.2f | trigger %.2f%% = %.2f | current EA loss %.2f%% | cooldown %dh",
+               g_baselineCapital, InpCooldownLossPct,
+               g_baselineCapital * InpCooldownLossPct / 100.0,
+               EALossPct(), InpCooldownHours);
+
    if(InpRewardRisk < 1.0)
      {
       Print("Tradie: InpRewardRisk must be >= 1.0");
+      return(INIT_PARAMETERS_INCORRECT);
+     }
+   if(InpCooldownLossPct <= 0.0 || InpCooldownLossPct > 100.0)
+     {
+      Print("Tradie: InpCooldownLossPct must be in (0, 100]");
       return(INIT_PARAMETERS_INCORRECT);
      }
    if(InpZoneLow >= InpZoneHigh || InpZoneLow < 0.0 || InpZoneHigh > 1.0)
@@ -1223,20 +1477,61 @@ int OnInit()
 
 void OnDeinit(const int reason)
   {
-   PrintFormat("Tradie stop: evaluations=%d rejections=%d last=%s",
-               g_evaluations, g_rejections, g_why);
+   PrintFormat("Tradie stop: evaluations=%d rejections=%d | EA realised %.2f | loss %.2f%% of %.2f | last=%s",
+               g_evaluations, g_rejections, g_eaRealized, EALossPct(), g_baselineCapital, g_why);
    Comment("");
+  }
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+  {
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+      return;
+   if(!HistoryDealSelect(trans.deal))
+      return;
+   if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != InpMagic)
+      return;
+   g_eaRealized += HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                   + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                   + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
   }
 
 void OnTick()
   {
    MaybeFlattenFriday();
 
+   // resync realised P&L from history once per day, so a missed
+   // OnTradeTransaction event cannot let the cooldown under-count losses
+   if(TimeCurrent() - g_lastRealizedSync > 86400)
+     {
+      InitRealizedPnL();
+      g_lastRealizedSync = TimeCurrent();
+     }
+
+   // D-19 runs every tick so a catastrophic floating loss flattens promptly,
+   // not at the next M15 close
+   CheckCooldown();
+
    // act once per completed M15 bar
    datetime barTime = iTime(_Symbol, PERIOD_M15, 0);
    if(barTime == 0 || barTime == g_lastBar)
       return;
    g_lastBar = barTime;
+
+   //--- D-19 capital cooldown (highest precedence) -------------------
+   string cdWhy = "";
+   if(CooldownActive(cdWhy))
+     {
+      g_why = cdWhy;
+      if(!g_cooldownLogged)
+        {
+         Print("Tradie: " + cdWhy + " - no new entries");
+         g_cooldownLogged = true;
+        }
+      return;
+     }
+   g_cooldownLogged = false;
 
    //--- R9 / gates -------------------------------------------------
    if(CountOpenPositions() >= InpMaxConcurrent)

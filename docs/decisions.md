@@ -54,6 +54,62 @@ Owner answers verbatim, then the resolved parameter. **Deviations from my recomm
 
 ---
 
+## 0h. D-18 & D-19 — sizing and the capital cooldown (added 2026-10-25)
+
+Two operator instructions received after ratification.
+
+### D-18 — Fixed 0.01 lots per trade (RATIFIED)
+
+Every trade uses **0.01 lots**, regardless of balance or SL distance. Implemented as `InpSizingMode = SIZING_FIXED_LOT`, `InpFixedLots = 0.01`.
+
+**What this changes:** `RSK-01` ("risk 0.5–1.0% per trade") **no longer describes what the EA does.** With a fixed lot, risk per trade is a *consequence* of the stop distance and account size, not a control. The EA now logs the actual risk on every trade:
+
+```
+Tradie sizing: 0.01 lots | SL 32.4 p | risk 3.24 (0.32% of balance)
+```
+
+| Account | 0.01 lots, 30-pip SL | Actual risk/trade |
+|---|---|---|
+| $500 | ~$3 | **0.6%** |
+| $2,000 | ~$3 | 0.15% |
+| $10,000 | ~$3 | **0.03%** — negligible; 35% loss would need ~1,100 losing trades |
+
+**Consequence for D-19:** the cooldown threshold is *absolute* (35% of capital) while the loss rate is now *fixed in currency*. On a large account the cooldown is effectively unreachable; on a small account it is reachable and quite fast. **This coupling is the most important thing to understand about these two changes together.**
+
+`InpRiskPercent` is retained but only used when `InpSizingMode = SIZING_RISK_PERCENT`.
+
+### D-19 — Cooldown after 35% of capital is lost (RATIFIED)
+
+Measured on **this EA's own trades only** (magic-filtered), realised + floating:
+
+```
+lossPct = -(realisedPnL + floatingPnL) / referenceCapital * 100
+```
+
+Trigger at `InpCooldownLossPct = 35.0`. Defaults: pause **168 h (7 days)**, flatten open EA positions, re-anchor on expiry.
+
+Implementation decisions I had to make, stated for the record:
+
+| Question | Answer | Why |
+|---|---|---|
+| Reference capital — fixed or rolling? | **Fixed**, captured at first init, persisted in a terminal global variable | A rolling reference can be outrun: the balance shrinks as you lose, so a % of *remaining* capital recedes and never triggers |
+| Count other trades on the account? | **No** — magic-filtered only | "lost to the EA" was the wording; account-wide would trigger on someone else's trades |
+| Include floating P&L? | **Yes** | A 35% drawdown that is still open is the same drawdown |
+| What happens after the 7 days? | **Re-anchor** to the new balance (`InpCooldownReanchor`) | Without this the loss is still ≥35% and the check re-arms instantly, forever — a permanent halt. Re-anchoring means repeated losses compound: 100 → 65 → 42 → 27 |
+| Flatten positions on trigger? | **Yes** by default (`InpCooldownFlatten`) | It is a stop-trading event, not a pause-for-lunch; leave `false` if you would rather let existing trades run to SL/TP |
+
+### ⚠️ The arithmetic you should see before running this
+
+**35% is not a risk control. It is a last-resort kill switch that fires long after the damage.**
+
+1. **Recovery maths:** after −35% you need **+53.8%** to get back to even. After −35%, −35% again you are at −57.75% and need **+137%**.
+2. **It contradicts the PRD by ~9×.** `RSK-08` (the equity brake) is **4%**. This cooldown sits at 35% — meaning the EA can lose nearly nine times what the PRD considers an emergency before anything stops it. The PRD's L1–L5 breaker stack (daily loss halt 3%, streak pause, 4% equity brake) is **not implemented in the EA at all**; D-19 is not a substitute for it.
+3. **At 1:3 with ~30% winners, a 35% drawdown is plausible in normal operation.** Sequences of 8–10 consecutive losers happen routinely at 30% win rate (expect one in roughly every 30–60 trades). At 0.01 lots on a $500 account (~0.6% risk/trade), 10 straight losses ≈ −6%. So on a small account the cooldown is comfortably far; but if you ever raise lot size, the same streak becomes far more expensive **while the 35% trigger stays fixed in percentage** — the trigger does not scale with lot size.
+
+**Recommendation, if you want one:** keep 35% as the absolute backstop, and add a *second, lower* threshold — e.g. 15% — that pauses for 24 h without flattening. Two-stage is how you get "stop and think" without waiting for catastrophe. Say the word and I will add it; it is ~20 lines reusing the same machinery.
+
+---
+
 ## 0b. Owner question: "is D-03 about the entry?"
 
 **No.** D-03 is about **which price levels are allowed to be the thing that gets swept** — it is a filter on rule 2 (liquidity sweep), which happens *before* the entry.

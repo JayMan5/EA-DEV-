@@ -84,7 +84,7 @@ Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 | 3b. Structure shift | MSS block in `Evaluate()` | Intervening swing, close beyond, displacement (D-13) |
 | 4. Entry model | `BuildZone()` | **Prior impulse** 45–55% (D-05 option C) |
 | 5. Confirmation | `BuildPOI()` + `IsBullEngulf()` | OB ∩ FVG, full-range engulf (D-06, D-08) |
-| 6. Risk management | `CalcLots()`, SL block | SL set on the order, before the entry exists (D-07) |
+| 6. Risk management | `CalcLots()`, SL block | SL set on the order before entry (D-07); **fixed 0.01 lots** (D-18), so risk % is an outcome, not a control |
 | 7. Bias alignment | `OnTick()` assertion | Raises on mismatch; never trades (D-01/R7) |
 | 8. Mental state | **Not implemented** | Cannot be automated — see below |
 | 9. Trade limit | `CountTradesToday()` | 3/day + 07:00–16:00 UTC window (D-10) |
@@ -98,6 +98,64 @@ Your checklist's rule 8 is *"not emotional / not forcing / not chasing losses."*
 - **Partly proxied** — the 3-trade cap and the session window limit "forcing" behaviour
 
 **Not present:** the daily operator check-in and the 30-minute post-loss cooldown (`D-12`). The check-in needs a human interface; the cooldown needs persistent cross-session state. Both belong in the Python system. If you want the cooldown in the EA, it's a small addition — say so.
+
+---
+
+## Sizing and the capital cooldown (D-18 / D-19)
+
+### Fixed 0.01 lots (D-18)
+
+`InpSizingMode = SIZING_FIXED_LOT`, `InpFixedLots = 0.01`. Every trade is 0.01 lots.
+
+Because the lot is fixed, **risk per trade is no longer a percentage you control** — it falls out of the stop distance and your balance. The EA logs the real number on every trade:
+
+```
+Tradie sizing: 0.01 lots | SL 32.4 p | risk 3.24 (0.32% of balance)
+```
+
+At 30-pip stops ≈ **$3 risk per trade**, so:
+
+| Balance | Risk/trade | 35% loss requires |
+|---|---|---|
+| $500 | ~0.6% | ~55 losing trades |
+| $2,000 | ~0.15% | ~230 losing trades |
+| $10,000 | ~0.03% | ~1,100 losing trades |
+
+**This is the key interaction with the cooldown:** the loss rate is fixed in *currency*, but the trigger is fixed in *percentage*. On a large account the cooldown is effectively unreachable. Read §"The 35% trap" below.
+
+### Capital cooldown (D-19)
+
+Pauses new entries when **this EA's own** realised + floating P&L reaches **−35%** of reference capital.
+
+| Input | Default | Meaning |
+|---|---|---|
+| `InpCooldownLossPct` | 35.0 | Trigger threshold (% of reference capital) |
+| `InpCooldownHours` | 168 | Pause length. `0` = halt until you set `InpCooldownReset=true` |
+| `InpCooldownFlatten` | true | Close open EA positions when it triggers |
+| `InpCooldownReanchor` | true | After expiry, measure the next 35% from the *new* balance |
+| `InpCooldownReset` | false | Set `true` once, recompile/restart, to clear a manual halt |
+
+Reference capital is captured **once** on first run and stored in a terminal global variable (`TRADIE_BASE_<magic>`), so a shrinking balance cannot outrun the trigger. Reset it by deleting that global variable (Tools → Global Variables, F3).
+
+When it fires you'll see:
+
+```
+Tradie D-19 TRIGGERED: EA loss 35.12% >= 35.00% of reference capital 1000.00
+  (realised -341.20 + floating -10.00). Entries paused until 2026-11-01 14:22
+Tradie D-19: flattening open EA positions
+```
+
+While cooling down, entries are skipped with `D-19: cooldown until ...` in the journal. **Friday flatten and existing SL/TP keep working** — the cooldown blocks new entries, it does not stop position management.
+
+### ⚠️ The 35% trap
+
+**Do not mistake this for a risk control. It is a kill switch that fires after severe damage.**
+
+- After **−35%** you need **+53.8%** to recover. Two of them = **−57.75%**, needing **+137%**.
+- The PRD's emergency equity brake (`RSK-08`) is **4%**. This threshold is ~9× looser. The EA implements **none** of the PRD's L1–L5 breaker stack (daily 3% halt, loss-streak pause, 4% equity brake). D-19 is not a substitute for them.
+- With 1:3 and ~30% winners, **8–10 consecutive losers is routine** (roughly once per 30–60 trades). At 0.01 lots on $500 that's ~−6%, so you are safe *at that lot size*. If you raise lots, the same streak costs more **while the 35% trigger stays put** — the trigger does not scale with position size.
+
+**Cheap improvement, if you want it:** a second, lower threshold (e.g. 15%) that pauses 24 h *without* flattening. Two-stage gives you "stop and think" before catastrophe. ~20 lines, reusing the existing machinery — ask and I'll add it.
 
 ---
 
@@ -135,9 +193,10 @@ At an estimated 0.05–0.15 setups/pair/day *after* OB∩FVG and 1:3 filtering, 
 3. **`D-15` sticky setup is implemented**, but "recording" a superseded sweep means a `Print` to the Journal, not a durable journal row.
 4. **No news blackout.** `RSK-09` needs an external calendar; the tester can't supply one.
 5. **No currency-exposure cap.** `RSK-04` is portfolio-level and needs all pairs in one process.
-6. **Server-time offset is auto-detected** from `TimeTradeServer() - TimeGMT()`. **Verify it in the Journal on the first run** — if the session filter looks wrong, that line is why. In the tester the offset may report 0; set `InpAutoGMTOffset=false` and `InpGMTOffsetHours` to your broker's true offset (commonly +2 or +3).
-7. **`input group` headers** require MetaEditor build 2650+ (2020). If your build is older, delete the `input group` lines.
-8. **Spread** comes from your broker's tester settings. A backtest on raw-spread "every tick" data will look better than a demo account at 18:00 UTC. Set a realistic spread.
+6. **The cooldown does not prevent losses, only repeats.** It cannot foresee a drawdown, and it is measured on this EA's trades only.
+7. **Server-time offset is auto-detected** from `TimeTradeServer() - TimeGMT()`. **Verify it in the Journal on the first run** — if the session filter looks wrong, that line is why. In the tester the offset may report 0; set `InpAutoGMTOffset=false` and `InpGMTOffsetHours` to your broker's true offset (commonly +2 or +3).
+8. **`input group` headers** require MetaEditor build 2650+ (2020). If your build is older, delete the `input group` lines.
+9. **Spread** comes from your broker's tester settings. A backtest on raw-spread "every tick" data will look better than a demo account at 18:00 UTC. Set a realistic spread.
 
 ---
 

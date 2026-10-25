@@ -4,7 +4,14 @@
 
 InpMagic=20261025
 InpDryRun=false
+InpSizingMode=0
+InpFixedLots=0.01
 InpRiskPercent=0.75
+InpCooldownLossPct=35.0
+InpCooldownHours=168
+InpCooldownFlatten=true
+InpCooldownReset=false
+InpCooldownReanchor=true
 InpRewardRisk=3.0
 InpMinSLPips=8.0
 InpMaxSLATR=3.0
