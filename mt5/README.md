@@ -138,13 +138,35 @@ For Strategy Tester work, run **one pair per run** — each tester run is isolat
 
 ### Tester settings that matter
 
-| Setting | Value |
-|---|---|
-| Chart / Period | **M15** — the EA's decision timeframe. It pulls D1 and H1 itself |
-| Modelling | **Every tick based on real ticks** for verdicts; "1 minute OHLC" only for fast iteration |
-| Date range | 3 years minimum on EURUSD; 5+ if your broker has it |
-| Spread | Set it explicitly. "Current" or a raw-spread default will flatter the results — real M15 trading at 21:00 UTC is much wider |
-| Symbol name | Broker-specific (`EURUSD`, `EURUSD.raw`, `EURUSDm`…). The EA uses the chart symbol, so any naming works — but **history quality follows the name**, and suffix variants often have shorter history |
+| Setting | Use | Why |
+|---|---|---|
+| Symbol | `EURUSD` | Deepest history, tightest spread (see above) |
+| Period | **M15** | The EA's decision timeframe. It pulls D1 and H1 itself |
+| Date | **5+ years if available**, 3 years minimum | At 1:3 with these filters, 2 years may yield too few trades to judge |
+| Modelling | **Every tick based on real ticks** | "Every tick" is generated from M1 bars; real ticks capture intra-bar SL/TP order |
+| Delays | **Random delay** | "Zero latency, ideal execution" is optimistic — it assumes your stop fills at the exact price |
+| Deposit | **$500–$2,000** | Below ~$1,000 the 0.01-lot ladder rung is reachable; above ~$10,000 it is not |
+| Leverage | 1:100 | Irrelevant at 0.01 lots, but keep it realistic |
+| Optimization | Disabled | Never optimise before the funnel has been read |
+| **"Profit in pips for faster calculations"** | **UNCHECK** | See warning below |
+
+### ⚠️ Do not leave "profit in pips" checked
+
+That option makes the tester compute P&L in pips instead of account currency. Two problems:
+
+1. The **D-19 cooldown ladder reads `AccountInfoDouble(ACCOUNT_BALANCE)` and position profit in money**. Percent-of-capital thresholds are meaningless if the tester is not moving the balance normally.
+2. Every risk number in these docs — 15% = ~25 losing trades at $500, etc. — assumes currency P&L.
+
+Uncheck it. If the run is too slow, shorten the date range instead of degrading the accounting.
+
+### Two runs, in this order
+
+| Run | `InpDryRun` | What you get |
+|---|---|---|
+| **A — plumbing** | `true` | Every rejection logged with its rule. This is the only mode that prints the funnel, because rejections are only `Print`ed when dry-run is on |
+| **B — behaviour** | `false` | Real trades, equity curve, cooldown triggers, slippage |
+
+**Run A first.** It tells you whether the rules fire at all and which one is the binding constraint — before you interpret a single P&L number. Run B with dry-run off will not print the funnel; you would only get the summary line at deinit.
 
 ---
 
