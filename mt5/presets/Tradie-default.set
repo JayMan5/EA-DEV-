@@ -52,6 +52,7 @@ InpZoneLow=0.45
 InpZoneHigh=0.55
 InpSetupTTLBars=96
 InpEntryMode=0
+InpZoneRequireOBFVG=true
 InpMinConfluence=0
 InpMaxEntryPastZoneATR=0.50
 InpRequireOB=true

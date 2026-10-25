@@ -1,4 +1,8 @@
-# RUN NOW — D-20 A/B test (EURUSDm M15)
+> **Status: RUN D and RUN E are done.** Results: [`results/2026-10-25-run-d-vs-e.md`](results/2026-10-25-run-d-vs-e.md).
+> Option B gave **39 signals vs 14** (×2.8). Next action is **RUN G** — `06-realrun-zone.set`, see the README.
+> Compile first: the EA gained `InpZoneRequireOBFVG`, which enforces D-08 in zone mode.
+
+# RUN NOW — D-20 A/B test (EURUSDm M15) — COMPLETED
 
 Two dry runs, ~4 seconds each. One command to look at afterwards. Nothing here sends an order.
 

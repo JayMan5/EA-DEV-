@@ -29,7 +29,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Tradie"
 #property link      ""
-#property version   "1.100"
+#property version   "1.110"
 #property description "Tradie checklist EA - 9-rule forex model (research/testing)"
 
 #include <Trade\Trade.mqh>
@@ -130,7 +130,8 @@ input int               InpSetupTTLBars       = 96;         // Setup expires aft
 
 input group             "=== R4/R5 Entry location (D-20) ==="
 input ENUM_ENTRY_MODE   InpEntryMode          = ENTRY_AT_ZONE; // Where the entry must occur
-input int               InpMinConfluence      = 0;          // Min POI score 0-3 (zone mode, 0=off)
+input bool              InpZoneRequireOBFVG   = true;       // D-08: zone mode still needs OB *and* FVG
+input int               InpMinConfluence      = 0;          // Min POI score 0-3 (quality gate, 0=off)
 input double            InpMaxEntryPastZoneATR= 0.50;       // Max entry beyond zone edge (x ATR, 0=off)
 
 input group             "=== R5 POI / Confirmation ==="
@@ -1577,8 +1578,20 @@ int Evaluate(double &entryOut, double &slOut, double &tpOut, string &whyOut, str
 
    if(InpEntryMode == ENTRY_AT_ZONE)
      {
-      //--- OB/FVG are no longer gates - they are a score.
-      //    InpMinConfluence = 0 measures the ceiling; raise it to tighten.
+      //--- D-08 is a RATIFIED RULE, not a quality preference: "OB and FVG
+      //    both required". D-20 demotes the POI from a LOCATION to a score,
+      //    but it does not repeal D-08. Enforced separately from the score,
+      //    because score>=2 also admits `one of them + zone overlap`, which
+      //    is not what D-08 says.
+      if(InpZoneRequireOBFVG && !(haveOB && haveFVG))
+        {
+         if(haveOB && !haveFVG)      whyOut = "R5/D-08: order block but no FVG";
+         else if(haveFVG && !haveOB) whyOut = "R5/D-08: FVG but no order block";
+         else                        whyOut = "R5/D-08: neither OB nor FVG";
+         return(0);
+        }
+
+      //--- quality gate on top of the rule
       if(InpMinConfluence > 0 && confluence < InpMinConfluence)
         {
          whyOut = StringFormat("R5/D-20: confluence %d < %d", confluence, InpMinConfluence);
@@ -1806,8 +1819,8 @@ int OnInit()
                InpZoneLow, InpZoneHigh, InpRewardRisk);
 
    if(InpEntryMode == ENTRY_AT_ZONE)
-      PrintFormat("Tradie D-20: entry=AT_ZONE (option B) | OB/FVG = confluence score 0-3, minConf=%d | max chase %.2fxATR",
-                  InpMinConfluence, InpMaxEntryPastZoneATR);
+      PrintFormat("Tradie D-20: entry=AT_ZONE (option B) | OB/FVG location demoted to a score | D-08 both required=%s | minConf=%d | max chase %.2fxATR",
+                  (InpZoneRequireOBFVG ? "YES" : "no"), InpMinConfluence, InpMaxEntryPastZoneATR);
    else
       PrintFormat("Tradie D-20: entry=AT_POI (option A, legacy) | OB=%s FVG=%s",
                   (InpRequireOB ? "required" : "off"), (InpRequireFVG ? "required" : "off"));

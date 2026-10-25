@@ -265,6 +265,17 @@ That is defensible as *"price retraced at least 50%"*, but it is **not** *"entry
 
 The last point is the one that matters: OB and FVG near the sweep extreme are, in zone mode, in the wrong place. A POI that actually sits in the zone is a much stronger signal than either alone.
 
+### D-20 result (measured 2026-10-25)
+
+`mt5/results/2026-10-25-run-d-vs-e.md`. Control passed exactly (14/14 identical signals), then option B produced **39 signals vs 14** — ×2.8. Frequency went 2.8 → 7.8 per year per pair; time-to-200-trades across 12 pairs went **6.0 → 2.4 years**.
+
+Two defects were found in the implementation, both mine:
+
+1. **The confluence score silently repealed D-08.** `score>=2` admits `one of OB/FVG + zone overlap`, not `both`. 13 of the 39 signals came from setups that D-08 forbids. Fixed with `InpZoneRequireOBFVG` (default `true`), kept separate from the score — a ratified rule must not be expressible as a scoring threshold.
+2. **Repeat entries on one setup** (7 of 39, same price, same sweep). Not fixed in code: `HasPositionOnSymbol()` blocks them in live trading. The dry-run count overstates frequency; the honest figure is 35 distinct setups.
+
+The zone width stays at 45–55%: the median miss is 13.9 pips, and widening enough to matter would stop it being a 50% retracement.
+
 ### How this is being tested
 
 Two presets that differ in **exactly two fields**:

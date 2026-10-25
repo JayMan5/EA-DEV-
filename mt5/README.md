@@ -210,6 +210,21 @@ If the first line says `entry=AT_POI` the preset did not apply. The second line 
 
 **One thing that may get worse, and is worth watching:** the target is 3× the stop, and the stop is now much wider (zone → sweep extreme, roughly half the leg). So the profit target sits further away in pips than it used to. Expect a **lower hit rate at the same 1:3**. If it collapses to near zero, the thing to question is the fixed 1:3 (D-09), not this change.
 
+### RUN G — real orders on the zone build (2026-10-25)
+
+**This replaces RUN B.** `06-realrun-zone.set` is `04-zone-entry.set` with `InpDryRun=false`, plus `InpZoneRequireOBFVG=true`.
+
+Two Settings-tab changes from RUN D:
+
+| Field | Value |
+|---|---|
+| Modelling | **Every tick based on real ticks** |
+| Delays | **Random delay** |
+
+Why they change now: RUN D only had to detect signals, so 1-minute OHLC was fine. RUN G has to *exit* trades, and the stop and target are hit intrabar. Expect the fill count to drop further from ~26 because of slippage and gaps.
+
+Before you run it, read [`results/2026-10-25-run-d-vs-e.md`](results/2026-10-25-run-d-vs-e.md) — in particular §4, which explains why 13 of RUN D's 39 signals are now rejected.
+
 ### RUN B (real trades) — only after RUN A looks sane
 
 Same Settings tab, but **Modelling = Every tick based on real ticks** and **Delays = Random delay**. Inputs: `02-realrun.set` (identical to RUN A except `InpDryRun=false`).
