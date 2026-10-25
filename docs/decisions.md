@@ -304,6 +304,38 @@ Tradie D-20: conf0=.. conf1=.. conf2=.. conf3=.. | signals by score: ../../../..
 
 ---
 
+## 0l. D-21 — the pip-based SL floor does not transfer across pairs (OPEN)
+
+Found in the 2026-10-26 dry run (`mt5/results/2026-10-26-dryrun-d08-funnel.md`). Not yet a decision; the owner chooses.
+
+### The problem
+
+`InpMinSLPips = 12` is an **absolute** floor, while the stop it competes with is **ATR-relative** (`InpMaxSLATR = 6.0`).
+
+| Symbol class | M15 ATR | 12 pips as a multiple | Effect |
+|---|---|---|---|
+| EURUSD | ~5–8 pips | **1.5–2.0 × ATR** | floor binds constantly; 1/3 of trades stopped at exactly 12.0 |
+| GBPJPY / JPY crosses | ~20–30 pips | **0.4–0.6 × ATR** | floor almost never binds; structural stop always dominates |
+
+So `04-zone-entry.set` / `06-realrun-zone.set` is not one strategy applied to twelve symbols. It is a strategy whose stop-placement rule changes meaning per symbol.
+
+### Why it matters now
+
+The 12-pair run is the next action, and its entire purpose is to compare pairs. If the floor binds differently on each one, the comparison conflates *rule quality by pair* with *floor behaviour by pair*.
+
+### Options
+
+| # | Option | Consequence |
+|---|---|---|
+| **A** | Run the 11 pairs as-is | Comparable with the 18-trade EURUSD baseline; per-pair SL distributions will reveal whether the floor distorts a pair. Costs 11 short runs, no code change |
+| **B** | Add `InpMinSLATR` (e.g. 1.5 × ATR) as an alternative floor, then run all 12 | Rule set means the same thing everywhere; invalidates direct comparison with the EURUSD runs already done |
+
+**Recommendation: A, then B only if the SL distributions show distortion.** A is cheap, keeps the existing baseline valid, and answers the question with data rather than assumption. Deciding B now would mean changing the stop rule immediately after measuring a sample, which is the pattern that makes backtests meaningless.
+
+**Do not change this input without the owner's instruction.** It alters the trade set.
+
+---
+
 ## 0b. Owner question: "is D-03 about the entry?"
 
 **No.** D-03 is about **which price levels are allowed to be the thing that gets swept** — it is a filter on rule 2 (liquidity sweep), which happens *before* the entry.

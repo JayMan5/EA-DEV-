@@ -20,7 +20,7 @@ EURUSDm, M15, 2021.10.01 → 2026.09.30. Deposit 500, fixed 0.01 lots, **real or
 
 `signals by score: 0/0/15/3` — the `conf = 1` bucket is empty. D-08 is a rule again, not a scoring threshold. That was the point of the fix, and it is verified.
 
-The 26 → 18 drop is a second, separate effect: this run placed real orders, so an open position on the symbol blocks later entries. RUN D counted those. The honest dry-run figure was 22 distinct setups; 4 were blocked by `HasPositionOnSymbol()`, which is correct behaviour.
+The 26 → 18 drop is a second, separate effect: this run placed real orders, so an open position on the symbol blocks later entries. RUN D counted those. The honest dry-run figure was 22 signals; 4 of them were re-entries on a setup already open, leaving 18 distinct setups — which is exactly the 18 trades placed.
 
 ---
 
@@ -110,8 +110,8 @@ The most consequential number in the run, and a correction to my earlier estimat
 
 The dry run overstated live frequency by **2.2×**, for two reasons, both legitimate:
 
-1. **D-08 removed 13 of the 39.** A ratified rule doing its job.
-2. **Position blocking removed 4 more.** You cannot be in two trades on one symbol, so a setup that fires while one is open is not tradeable. A dry run counts it anyway.
+1. **D-08 removed 17 of the 39.** A ratified rule doing its job. (Corrected 2026-10-26: this document originally said 13. The other 4 scored 2 through *order block + zone overlap* while missing an FVG — see §1 of `2026-10-26-dryrun-d08-funnel.md`.)
+2. **4 of the remaining 22 dry-run signals were re-entries** on setups that already had a position open. Collapsing them leaves **18 distinct setups**, which is exactly the 18 trades taken. No additional trades were lost to position blocking — the 22 → 18 gap is entirely duplicates.
 
 **After RUN D I reported 2.4 years to a verdict. The honest figure is 4.6.** That estimate rested on a dry run that cannot know about point 2, and I should have flagged the suppression risk at the time rather than quoting the number as though it were achievable.
 

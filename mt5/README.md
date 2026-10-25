@@ -210,6 +210,12 @@ If the first line says `entry=AT_POI` the preset did not apply. The second line 
 
 **One thing that may get worse, and is worth watching:** the target is 3× the stop, and the stop is now much wider (zone → sweep extreme, roughly half the leg). So the profit target sits further away in pips than it used to. Expect a **lower hit rate at the same 1:3**. If it collapses to near zero, the thing to question is the fixed 1:3 (D-09), not this change.
 
+### Dry run with D-08 on — DONE (2026-10-26)
+
+**22 signals, 18 distinct setups, 3.6/yr/pair** — and the same 18 setups as the live run. Dry runs can now predict live trade counts. Full funnel: [`results/2026-10-26-dryrun-d08-funnel.md`](results/2026-10-26-dryrun-d08-funnel.md).
+
+The table below still applies to `04-zone-entry.set` and is what to run for the 11 remaining pairs.
+
 ### RUN G — DONE (2026-10-25)
 
 Result: **18 trades, −4.39 (−0.88%)** on real ticks. Full analysis in [`results/2026-10-25-run-g-realtick.md`](results/2026-10-25-run-g-realtick.md).
