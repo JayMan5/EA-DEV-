@@ -5,6 +5,7 @@
 > **Status:** **DRAFT — G1 NOT PASSED.** Every `PROPOSED` value below needs owner ratification (see §10). G1 passes only when no `TBD` and no `PROPOSED` remains in a normative position.
 > **Authority:** `docs/source/Trading_Checklist.pdf` ("01C — TRADING CHECKLIST (STRICT RULES)"). Where this document and the checklist disagree, **the checklist wins** and this document is wrong.
 > **Implements:** PRD v2 `STR-01`, `STR-02`, `STR-03`, `STR-05`, `STR-06`
+> **Draft answers:** `docs/decisions.md` — proposed answers to every decision below, for owner redline. Where they differ from §4, `decisions.md` wins (§4 revisions listed there).
 
 ---
 
@@ -416,7 +417,9 @@ Each needs an owner answer. Defaults below are what the code will assume if unan
 | **D-12** | Mental-state proxy | check-in on/off; cooldown minutes | check-in on, 30 min cooldown | Med |
 | **D-13** | MSS break level | intervening swing / last swing / prior bar high · close vs wick | intervening swing, close required | **High** |
 
-**G1 passes when:** D-01…D-13 are answered, §4 contains no `PROPOSED`, every rule has ≥2 pass + ≥2 fail fixtures in the repo, and every parameter has a mutation test.
+**G1 passes when:** D-01…D-15 are answered, §4 contains no `PROPOSED`, every rule has ≥2 pass + ≥2 fail fixtures in the repo, and every parameter has a mutation test.
+
+> **Two decisions were surfaced while drafting the answers** and are not in the table below: **D-14** (tie-break when two setups compete for one slot — required for determinism) and **D-15** (a new sweep while a setup is live — replace vs ignore). Both are specified in `docs/decisions.md` §2.
 
 ---
 

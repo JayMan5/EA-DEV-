@@ -5,7 +5,7 @@
 > **Author:** Proposed rewrite (supersedes v1.0.0-draft by Va_d3R)
 > **Classification:** CONFIDENTIAL — Internal Use Only
 > **Status:** Proposed — pending owner sign-off on the open items in Appendix H
-> **Companion docs:** `rule-spec.md` (the G1 deliverable — the actual 9 rules, specified), `source/Trading_Checklist.pdf` (rule authority), `PRD-REVIEW.md` (rationale for every change), `Tradie PRD.md` + `Tradie PRD_APPENDIX.md` (v1, retained for reference)
+> **Companion docs:** `rule-spec.md` (the rules, specified), `decisions.md` (proposed answers to all 15 G1 decisions, for owner redline), `source/Trading_Checklist.pdf` (rule authority), `PRD-REVIEW.md` (rationale for every change), `Tradie PRD.md` + `Tradie PRD_APPENDIX.md` (v1, retained for reference)
 
 ---
 
@@ -94,7 +94,7 @@ Every gate has an owner, a method, pass criteria and a defined fail action. **No
 | | |
 |---|---|
 | **Source** | `docs/source/Trading_Checklist.pdf` (the real checklist, received 2026-10-25) |
-| **Draft** | `docs/rule-spec.md` v0.1.0-draft exists — **13 open decisions remain, so G1 is not passed** |
+| **Draft** | `docs/rule-spec.md` + `docs/decisions.md` exist — **15 decisions have proposed answers but none are ratified, so G1 is not passed** |
 | **Pass** | Every rule in `docs/rule-spec.md` §4 has no `PROPOSED` or `TBD` in a normative position, ≥2 pass + ≥2 fail fixtures in `tests/fixtures/rules/`, a mutation test per parameter, and a declared `rule → granularity` mapping. Decisions D-01…D-13 all answered |
 | **Fail** | No rule engine code is written. Data layer and backtester scaffolding may proceed |
 | **Review** | The spec is reviewed by a second trader if one is available; otherwise each rule must include one worked example annotated on real candles |
