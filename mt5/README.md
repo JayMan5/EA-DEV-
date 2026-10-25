@@ -74,6 +74,62 @@ Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 
 ---
 
+## Exact settings for the next run
+
+Three presets ship in `mt5/presets/`. Load one via **Inputs tab → Load**, apply, then press Start. Loading a preset overwrites the whole Inputs tab, which is exactly why it exists — it removes the "I changed InpDryRun and it didn't take" failure mode.
+
+### Tester Settings tab — RUN A (funnel)
+
+| Field | Value |
+|---|---|
+| Expert | `Advisors\Tradie.ex5` |
+| Symbol | `EURUSDm` (or a symbol with **History quality ≥ 90%**) |
+| **Period** | **M15** |
+| Date | Custom period, **2021.10.01 → 2026.10.24** |
+| Forward | No |
+| Delays | **Zero latency, ideal execution** (timing does not affect signal detection) |
+| Modelling | **1 minute OHLC** (the EA is bar-based and never reads ticks) |
+| Deposit | **500 USD** |
+| Leverage | 1:100 |
+| Optimization | Disabled |
+| Profit in pips | **off** |
+
+### Inputs — RUN A (`01-funnel-dryrun.set`)
+
+Only three values differ from the stock defaults:
+
+| Input | Stock | **RUN A** | Why |
+|---|---|---|---|
+| `InpDryRun` | false | **true** | No orders; every rejection is logged |
+| `InpERMin` | 0.30 | **0.20** | 0.30 rejected 69.4% of all bars (ER median 0.14, p90 0.26) |
+| `InpMinSLPips` | 8.0 | **12.0** | 8.5-pip stops on EURUSD are spread noise, not structure |
+
+Everything else stays at default. Full list in the preset file.
+
+### Confirm the preset actually applied
+
+Before trusting the run, look for these three lines in the **Journal**:
+
+```
+Tradie cooldowns: SOFT on (15.0% -> 24h, no flatten) | HARD 35.0% -> 168h, flatten=yes | post-loss 30 min
+Tradie D-19: SOFT ref 500.00 (loss so far 0.00%) | HARD ref 500.00 (loss so far 0.00%) | overall EA loss 0.00%
+Tradie ATR check: M15 ATR14=0.000xx | PERIOD_H1 ATR20=0.000xx
+```
+
+`ref 500.00` confirms the $500 deposit was picked up. `ATR14` non-zero confirms the indicator handles work.
+
+**If those lines are missing**, the EA did not initialise properly or the Journal is filtered — check the **Experts** tab, not just Journal.
+
+### RUN B (real trades) — only after RUN A looks sane
+
+Same Settings tab, but **Modelling = Every tick based on real ticks** and **Delays = Random delay**. Inputs: `02-realrun.set` (identical to RUN A except `InpDryRun=false`).
+
+### RUN C (cooldown check) — optional, and not an edge test
+
+`03-cooldown-test.set` with **deposit 30 USD**. At 0.01 lots a 12-pip stop risks ~$1.20 ≈ 4% of $30, so the 15% SOFT rung fires after ~4 losses and you can verify D-19 wiring in a short run. **Never judge the strategy from this equity curve** — it is a wiring test only.
+
+At $500 the same ladder needs ~60 losses to reach 15%, so it will not fire during RUN B. That is expected, not a bug.
+
 ## First backtest results — EURUSDm, 5 years (2026-10-25)
 
 First real run. **0 trades in the Overview, and that is not a strategy verdict** — see finding 1.
