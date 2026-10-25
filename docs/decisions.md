@@ -214,6 +214,8 @@ That is defensible as *"price retraced at least 50%"*, but it is **not** *"entry
 
 **If B is adopted,** `InpRequireOB` / `InpRequireFVG` change meaning: instead of gating, they add a confluence score used in `D-14` ranking. That is a code change of roughly 40 lines.
 
+**Evidence added 2026-10-25** (`mt5/results/2026-10-25-eurusd-5y.md`): measured frequency is **2.8 signals/year on EURUSD** at `InpERMin=0.20`, giving ~34 trades/year across 12 pairs and requiring ~6 years to reach 200 trades. Option B is therefore no longer only a fidelity fix — **moving the entry into the 50% zone removes the requirement to travel on to the POI, so it should also raise frequency materially.** It is now the highest-value change in the project, because it improves correctness and sample size in the same edit.
+
 ### Related
 
 - `InpMinSLPips = 8` should rise to **12** regardless of which option is chosen — an 8.5-pip stop on EURUSD is noise.

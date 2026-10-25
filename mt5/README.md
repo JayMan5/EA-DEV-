@@ -176,6 +176,8 @@ At $500 the same ladder needs ~60 losses to reach 15%, so it will not fire durin
 
 ## First backtest results — EURUSDm, 5 years (2026-10-25)
 
+> **Full analysis: [`results/2026-10-25-eurusd-5y.md`](results/2026-10-25-eurusd-5y.md).** The summary below was written from a 1 MB log tail; the complete log contains **three separate runs** and supersedes parts of it.
+
 First real run. **0 trades in the Overview, and that is not a strategy verdict** — see finding 1.
 
 `evaluations=47337 rejections=47329 signals=8 | SOFT 0.00% of 500.00 | HARD 0.00%`
