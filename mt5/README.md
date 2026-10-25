@@ -2,6 +2,8 @@
 
 A MetaTrader 5 Expert Advisor that implements the ratified rule set from `docs/rule-spec.md` and `docs/decisions.md`, so the strategy can be **backtested and forward-tested without OANDA API access**.
 
+> **Testing right now? → [`RUN-NOW.md`](RUN-NOW.md).** One page: the two settings, the two `.set` files, and the only five cells you need to check.
+
 ## ⚠️ Read this before you run it
 
 **This is a research tool, not the production system.**
