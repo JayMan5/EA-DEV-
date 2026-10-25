@@ -5,7 +5,7 @@
 > **Author:** Proposed rewrite (supersedes v1.0.0-draft by Va_d3R)
 > **Classification:** CONFIDENTIAL — Internal Use Only
 > **Status:** Proposed — pending owner sign-off on the open items in Appendix H
-> **Companion docs:** `PRD-REVIEW.md` (rationale for every change), `Tradie PRD.md` + `Tradie PRD_APPENDIX.md` (v1, retained for reference)
+> **Companion docs:** `rule-spec.md` (the G1 deliverable — the actual 9 rules, specified), `source/Trading_Checklist.pdf` (rule authority), `PRD-REVIEW.md` (rationale for every change), `Tradie PRD.md` + `Tradie PRD_APPENDIX.md` (v1, retained for reference)
 
 ---
 
@@ -46,6 +46,8 @@ v1.0 was a strong *engineering* document with three unaddressed problems: the st
 | 10 | **Resolved 10 internal contradictions** (news window, RR, paths, entry points, day boundaries, schema) | See Appendix G |
 | 11 | **Uptime is now measured, not declared** | "98% monthly" had no observer. Replaced with auditable loop-availability and off-host detection |
 | 12 | **Split v1.0 into v0.1 → v1.0** with exit criteria | One-person scope: research + engine + execution + ops in one release is 5–7 months of unpriced risk |
+| 13 | **Rule set received and specified** (`docs/rule-spec.md`) — the real checklist replaced v1's invented `RULES_IDS` | v1's rule list was wrong: slot 8 is `MENTAL STATE`, not `CIRCUIT_BREAKERS`, and slot 7 duplicates slot 1 |
+| 14 | **Rules are a staged setup state machine**, not 9 simultaneous booleans (`STR-07`, INV-10) | Conditions accrue over days/hours; requiring them all on one M15 bar would produce ~0 trades |
 
 **Deliberately unchanged** (these were right): static SL/TP attached at entry with no trailing; the daemon is not in the exit path; CLI-first; single user, no RBAC; market entry only; no MT4/MT5; bare metal; Python 3.11; OANDA as primary venue; Telegram as primary alert channel.
 
@@ -60,7 +62,12 @@ v1.0 was a strong *engineering* document with three unaddressed problems: the st
 
 **Product thesis:** discipline is not a feeling, it is an enforced precondition. A trade happens only when every rule evaluates true; one false ⇒ no trade, forever, including when the operator wants it to.
 
-**What this document will not do:** it will not invent the 9 rules. Their definition is Gate 1 and belongs to the owner. Until they exist in written, testable form, this project has no definition of done.
+**On the rules:** the checklist has now been received (`docs/source/Trading_Checklist.pdf`) and is specified in `docs/rule-spec.md`. Two findings from that work are structural, not cosmetic:
+
+- The 9 rules are a **sequence**, not 9 simultaneous booleans. Conditions accrue from the daily bias down to a single M15 engulfing bar, so the engine is a **staged setup state machine** (`STR-07`), and setups must survive a restart (INV-10). v1's "evaluate all 9 atomically on every M15 close" reading would produce essentially zero trades.
+- Only **8 of the 9 are independent checks.** Rule 7 (bias alignment) restates rule 1 and becomes an assertion (INV-9). Rule 8 (**mental state**) cannot be evaluated by software and becomes a proxy plus a daily operator check-in (`RSK-11`) — it is the one rule that must never be quietly deleted.
+
+The checklist also defines **entries only**: it contains no exit/target rule, no session filter and no supply/demand definition. Those are owner decisions (`rule-spec.md` §10), not implementation details.
 
 **The honest position on edge:** none is demonstrated yet, and the gates below are *filters*, not proof. A 0.1R edge cannot be established with fewer than ~800 trades at conventional power (App. D). The plan therefore treats "minimum-size live" as the final evidence-gathering stage rather than pretending a 3-month backtest settles it.
 
@@ -86,9 +93,12 @@ Every gate has an owner, a method, pass criteria and a defined fail action. **No
 
 | | |
 |---|---|
-| **Pass** | All 9 rules documented in `docs/rule-spec.md` per Appendix A, each with ≥2 pass and ≥2 fail fixtures, zero remaining `TBD` parameters, and a declared `rule → granularity` mapping |
+| **Source** | `docs/source/Trading_Checklist.pdf` (the real checklist, received 2026-10-25) |
+| **Draft** | `docs/rule-spec.md` v0.1.0-draft exists — **13 open decisions remain, so G1 is not passed** |
+| **Pass** | Every rule in `docs/rule-spec.md` §4 has no `PROPOSED` or `TBD` in a normative position, ≥2 pass + ≥2 fail fixtures in `tests/fixtures/rules/`, a mutation test per parameter, and a declared `rule → granularity` mapping. Decisions D-01…D-13 all answered |
 | **Fail** | No rule engine code is written. Data layer and backtester scaffolding may proceed |
 | **Review** | The spec is reviewed by a second trader if one is available; otherwise each rule must include one worked example annotated on real candles |
+| **Note** | G1 is **independent of G0** — it can be advanced while broker access is unresolved, and it is the cheapest work in the project |
 
 ### G2 — Edge within costs · *owner: Va_d3R · blocks: EX-01*
 
@@ -192,6 +202,8 @@ These are constraints on the codebase, not aspirations. Each has a test in `test
 | **INV-6** | **Determinism.** No wall-clock, no RNG, no network, no filesystem access inside `evaluate()`. Time and account are injected | Same-input hash equality across processes |
 | **INV-7** | **Fail closed.** Any uncertainty (stale feed, ambiguous API response, missing news data) ⇒ **no new entries**; existing positions keep their broker-side exits | Staleness injection tests |
 | **INV-8** | **Reversibility.** Stopping and flattening are single commands that do not depend on the strategy process being healthy | `tradie panic` exercised with a dead daemon |
+| **INV-9** | **Bias alignment is an assertion.** `sign(direction) == bias` at the submit boundary. A failure raises and alerts; it is never a soft rejection | Unit test; any mismatch is treated as a P1 defect |
+| **INV-10** | **Setups persist.** The rule set is a staged state machine; a restart mid-setup resumes the same setup, never resets it | Kill -9 at each setup state; state must be identical after restart |
 
 ---
 
@@ -207,8 +219,10 @@ Every requirement has an acceptance test. "Done" means the test exists and passe
 | **STR-02** | Rule engine evaluates the 9 rules as pure functions over `MarketView` + `RiskState`. Gates (`RISK_MANAGEMENT`, `CIRCUIT_BREAKERS`, `TRADE_LIMIT`) evaluated **first** and short-circuit | Unit tests per rule; gate ordering asserted |
 | **STR-03** | Every evaluation — **including rejections** — emits a `Decision` record with per-rule booleans and evidence. Rejected-signal journal is retained and is queryable | Journal contains rejections with the first failing rule named |
 | **STR-04** | Rule parameters live in `config.yaml` under a `strategy:` block; `strategy_version` = short hash of the resolved parameter set, recorded on every decision, order, trade and report | Changing a parameter changes `strategy_version` |
-| **STR-05** | Two rules are recognised as *the same check* in v1 (`BIAS_HTF` and `BIAS_ALIGNMENT_GATE`). Owner must either merge them to 8 rules or state what distinct predicate the second one evaluates | Documented at G1 |
-| **STR-06** | `rule → granularity` mapping is explicit and configurable (see Appendix A.2) | No rule infers its own timeframe |
+| **STR-05** | ~~Two rules are recognised as the same check~~ **RESOLVED (H-04):** `BIAS_ALIGNMENT_GATE` restates `BIAS_HTF` and is not an independent condition. It becomes **INV-9** (an assertion), leaving **8 independent checks**, not 9 | Unit test asserts a mismatch raises |
+| **STR-06** | `rule → granularity` mapping is explicit and configurable (see Appendix A.2 and `rule-spec.md` §2) | No rule infers its own timeframe |
+| **STR-07** | **The rule set is a staged setup state machine, not a conjunction over one bar.** Conditions accrue over hours/days: bias (D) → sweep (M15) → structure shift (M15) → retrace (M15) → engulf (one bar). A `setup_id` is issued at the sweep, persisted, and carries a TTL | `rule-spec.md` §3; evaluating all conditions on a single bar would produce ~0 trades and is a spec defect |
+| **STR-08** | `R8_MENTAL_STATE` is not machine-evaluable. It is implemented as **(a)** structural satisfaction, **(b)** mechanical proxies (loss-streak breaker, trade cap, setup expiry, force-trade cooldown) and **(c)** a required daily operator check-in | `RSK-11`; `tradie session check-in` recorded in `events` |
 
 ### 7.2 Data layer
 
@@ -275,6 +289,8 @@ L1  trade cap       → no new entries once cap reached
 | **RSK-08** | Equity brake | session equity DD (incl. floating) ≥ **4.0%** ⇒ flatten + halt | The emergency brake, beyond the arithmetic of 3×1% |
 | **RSK-09** | News blackout | ±45 min around **high-impact** events for either currency; block new entries; do not force-close | Widened from ±30 min for realism; per-pair, not global. Fail closed if data is stale |
 | **RSK-10** | All breaker state persists across restarts (SQLite) and survives a crash mid-transition | Restart-during-breaker test |
+| **RSK-11** | **Mental-state precondition (rule R8).** No entries unless a `trading_day` check-in exists (`tradie session check-in`), and no entry within `force_trade_cooldown_min` (30) of a realised loss. Open positions are unaffected | Missing check-in ⇒ zero entries, alert raised; cooldown asserted in the gate layer |
+| **RSK-12** | **Cross-day setup policy:** setups persist across the 00:00 UTC boundary (a setup begun at 23:50 is valid at 00:10); only the `R9` counter resets | Boundary fixture test |
 
 ### 7.6 Alerts & reporting
 
@@ -355,13 +371,21 @@ class Decision:
     rr: float | None
     risk_pct: float | None
     evidence: dict[str, float]        # rule-specific diagnostics (swept_level, atr, ...)
+    # added with the real rule set (rule-spec.md §9)
+    setup_id: str | None              # None when no setup is active
+    setup_state: Literal["swept","shifted","retraced","confirmed","invalidated","expired"] | None
+    retrace_depth: float | None       # actual retracement achieved, e.g. 0.47
+    body_ratio: float | None          # R5 engulfing quality
+    displacement_atr: float | None    # R3b MSS strength
+    efficiency_ratio: float | None    # R3a chop filter
 ```
 
 ### 8.2 SQLite tables
 
 | Table | Purpose |
 |---|---|
-| `decisions` | Every evaluation, including rejections (the research asset) |
+| **`setups`** | **Staged rule state machine (`STR-07`, INV-10).** `setup_id`, `instrument`, `state ∈ {swept, shifted, retraced, confirmed, invalidated, expired}`, `state_entered_at`, `sweep_extreme`, `mss_level`, `leg_len_pips`, `zone_low`, `zone_high`, `expires_at`, `invalidation_reason`, `strategy_version` |
+| `decisions` | Every evaluation, including rejections (the research asset). References `setup_id` |
 | `orders` | Intent rows: `client_order_id`, `state ∈ {intent, submitted, accepted, rejected, filled, cancelled}`, raw request/response |
 | `trades` | `trade_id`, open/close ts & prices, units, `pnl`, `pnl_r`, `slippage_pips`, `cost_pips`, `gap_risk`, `strategy_version` |
 | `events` | Append-only operational log (INV-3). The audit trail of record |
@@ -561,25 +585,45 @@ Recorded so they are decisions rather than omissions: second venue/cTrader; trai
 - **status:** DEFINED / TBD
 ```
 
-### A.2 Rule inventory and proposed mapping
+### A.2 Rule inventory — from the real checklist
 
-| # | Rule ID | Kind | Proposed granularity | Owner decision needed |
+Source of truth: `docs/source/Trading_Checklist.pdf`. Full specification: `docs/rule-spec.md` §2–§4.
+
+| Checklist item | Rule ID | Kind | Granularity | Mechanical? |
 |---|---|---|---|---|
-| 1 | `BIAS_HTF` | signal | D (fallback H4) | What defines bias, and what happens when D and H4 disagree |
-| 2 | `LIQUIDITY_SWEEP` | signal | M15 (context H1) | Swing definition, penetration bounds, recency |
-| 3 | `MARKET_STRUCTURE` | signal | H1 | Swing detection algorithm (this choice dominates results) |
-| 4 | `ENTRY_MODEL_RETRACE` | signal | M15 | Retrace target and setup expiry |
-| 5 | `ENGULFING_CONFIRMATION` | signal | M15 | Body engulf only, or full-range engulf; body/range ratio |
-| 6 | `RISK_MANAGEMENT` | **gate** | account | Sizing validity, RR ≥ 2, margin sufficiency |
-| 7 | `BIAS_ALIGNMENT_GATE` | **gate** | M15 vs HTF | **Merge with #1 or define the distinct predicate** |
-| 8 | `CIRCUIT_BREAKERS` | **gate** | state | Which breaker levels block (L1–L5) |
-| 9 | `TRADE_LIMIT` | **gate** | state | Cap, concurrency, currency-exposure |
+| 1. Bias (higher timeframe) | `R1_BIAS_HTF` | regime | D (fallback H4) | ✅ |
+| 2. Liquidity sweep | `R2_LIQUIDITY_SWEEP` | trigger | M15 (context H1) | ✅ |
+| 3a. Structure clean (not choppy) | `R3a_STRUCTURE_QUALITY` | filter | H1 window | ✅ (needs metric) |
+| 3b. Structure shifting in bias direction | `R3b_STRUCTURE_SHIFT` | confirmation | M15 | ✅ |
+| 4. Entry model — 50% retracement | `R4_ENTRY_RETRACE` | zone | M15 | ✅ |
+| 5. Confirmation — M15 engulfing | `R5_ENGULFING_CONFIRMATION` | trigger | **one M15 bar** | ✅ |
+| 6. Risk management | `R6_RISK_MANAGEMENT` | gate | account | ✅ |
+| 7. Bias alignment | `R7_BIAS_ALIGNMENT` | **assertion** | — | ✅ (INV-9) |
+| 8. Mental state | `R8_MENTAL_STATE` | **human → proxy** | operator + state | ⚠️ partial |
+| 9. Trade limit | `R9_TRADE_LIMIT` | gate | `trading_day` | ✅ |
 
-> **Structural recommendation:** describe these as **5 signal rules + 4 gates** (or 6+3 if #1 stays separate). It changes the code layout, the journal schema and the funnel reporting — and it stops the document implying nine independent conditions exist.
+> **Corrections to v1's rule list.** v1's `RULES_IDS` was invented and wrong in two places: slot 8 was `CIRCUIT_BREAKERS`, but the checklist's rule 8 is **MENTAL STATE**; and `BIAS_ALIGNMENT_GATE` (slot 7) restates `BIAS_HTF` (slot 1). Circuit breakers are a separate risk layer (`RSK-01`…`RSK-12`), not a checklist rule.
+>
+> **Honest count:** 5 staged price conditions + 2 gates + 1 assertion + 1 human precondition. **Eight independent checks, not nine.**
 
 ### A.3 Evaluation order
 
-`CIRCUIT_BREAKERS → TRADE_LIMIT → RISK_MANAGEMENT → BIAS_ALIGNMENT_GATE → signal rules`. Gates are cheap; failing them first avoids pointless price work and produces a clean attribution funnel.
+```
+R9 trade limit → R6 risk/margin → R8 mental-state proxy → R1 bias
+   ── if a setup exists ──
+R2 sweep → R3a structure quality → R3b structure shift → R4 retrace → R5 engulf
+   ── R7 assertion at submit (raises, never soft-rejects) ──
+```
+
+Gates are cheap and fail first, which keeps the rejection funnel in the daily report meaningful (one non-trade, one attributed rule).
+
+### A.4 The 13 decisions G1 still requires
+
+Listed with defaults and leverage in `docs/rule-spec.md` §10. The four that move results most: **D-05** (50% of *which* leg), **D-04** (chop metric), **D-09** (exit/TP rule — absent from the checklist entirely), **D-01** (bias definition and D/H4 conflict).
+
+### A.5 Known strategy gaps (not fixable by coding)
+
+The checklist defines **entries only**. It contains no exit/target rule, no session/time filter, no instrument-selection rule and no setup-invalidation semantics. See `rule-spec.md` §8. The missing exit rule in particular blocks `R6`'s `rr_actual` check from being meaningful — `min_rr` cannot be enforced with confidence until D-09 is answered.
 
 ---
 
@@ -725,7 +769,9 @@ Tradie/
 |---|---|---|
 | No gates; one "v1.0" release with F-01–F-10 | G0–G5 gates; v0.1 → v1.0 milestones | A solo 10-feature release is unpriced risk; gates make stopping early a success |
 | OANDA v20 assumed available | G0 verifies it; BT-only is a valid outcome | Documented restriction for the operator's likely entity |
-| `RULES_IDS` only | Appendix A contract + G1 | The rules are the product |
+| `RULES_IDS` only (and partly wrong) | `docs/rule-spec.md` — 10 rules/checks from the real checklist; Appendix A.2 | v1 invented rule 8 (`CIRCUIT_BREAKERS`); the checklist's rule 8 is `MENTAL_STATE` |
+| 9 rules = 9 atomic booleans on one bar | Staged setup state machine + `setups` table (`STR-07`, INV-10) | The conditions are sequential by construction; the atomic reading never trades |
+| No treatment of `MENTAL_STATE` | `RSK-11` proxy + daily operator check-in (`STR-08`) | A bot cannot evaluate "not emotional"; deleting the rule silently would be worse |
 | 3 months / WR ≥60% / Sharpe ≥1.2 | Walk-forward OOS, ≥100 trades, expectancy ≥0.10R, cost stress, CI reporting | Old gates pass on noise or on bugs |
 | No costs anywhere | Cost model (App. D), cost drag in every report | 10–25% of edge |
 | 3-month replay gate before live | 8-week *paper soak* + G5 minimum-size live | Calendar-bound evidence that actually reflects the system |
@@ -758,12 +804,17 @@ Blocking; each needs a decision before the dependent milestone.
 |---|---|---|---|
 | H-01 | Does an OANDA account with v20 API access exist for your residency? Which entity? | **Everything** | Project proceeds as BT-only |
 | H-02 | `guaranteedStopLossOrderMode`, `marginRate`, `hedgingEnabled`, account currency, account size | EX-06, RSK-01 | Plain SL, gap-risk flag on, risk 0.5% |
-| H-03 | The 9 rules in concrete terms (Appendix A) | G1 | No strategy code is written |
-| H-04 | Is `BIAS_ALIGNMENT_GATE` distinct from `BIAS_HTF`? Merge to 8 rules? | STR-05 | Treated as duplicate; 8 rules |
+| ~~H-03~~ | ~~The 9 rules in concrete terms~~ **RESOLVED 2026-10-25** — `docs/source/Trading_Checklist.pdf` received; specified in `docs/rule-spec.md`, 13 decisions still open (D-01…D-13) | G1 | — |
+| ~~H-04~~ | ~~Is `BIAS_ALIGNMENT_GATE` distinct from `BIAS_HTF`?~~ **RESOLVED** — no, it restates it; becomes INV-9 ⇒ 8 independent checks | STR-05 | — |
 | H-05 | Realistic setups per day — is the 3-trade cap a ceiling you expect to hit, or a rail? | RSK-05, sample-size planning | Kept at 3; expect ~0.5–2/day |
 | H-06 | Willing to run practice-only for ~2 months if G0 fails? | Roadmap | Assumed yes |
 | H-07 | Is 5 pairs the right universe, or should correlated USD-majors be reduced to 2–3? | RSK-03/04 | Universe kept; exposure cap enforced |
 | H-08 | News calendar: free + archived (fail-closed, no history), or paid with actuals? | ALR/RSK-09 | Free + daily archive; R8 backtested disabled and the gap documented |
+| H-09 | **Exit / take-profit rule** — the checklist defines entries only (D-09) | R6, G2 | Fixed 1:2 from PRD v1 F-06 |
+| H-10 | **Session/time filter** — none in the checklist; Asian-session sweeps are likely noise (D-10) | R2, G2 | None in v1 (not recommended) |
+| H-11 | **50% of which leg** (D-05) and **chop metric** (D-04) — the two highest-leverage parameters | R3a, R4, G2 | Displacement leg; efficiency ratio ≥ 0.30 |
+| H-12 | **Supply/demand zones** — referenced by rule 5 but never defined (D-08) | R5 | R4 zone doubles as the zone in v1 |
+| H-13 | **Mental-state check-in** — accept a daily operator confirmation as the implementation of rule 8 (D-12) | RSK-11 | Check-in required; 30 min force-trade cooldown |
 
 ---
 
