@@ -1,8 +1,9 @@
 # Tradie — G1 Decisions (draft for redline)
 
-> **Version:** 0.1.0-draft
+> **Version:** 1.0.0-RATIFIED
 > **Date:** 2026-10-25
-> **Status:** **PROPOSED ANSWERS — awaiting owner redline.** Nothing here is ratified until §6 is signed.
+> **Status:** **RATIFIED by owner (Va_d3R), 2026-10-25.** Answers recorded in §0a. G1 is unblocked; fixture writing is the remaining task.
+> **Note:** §2 keeps the original reasoning for the record. Where an owner answer differed from my recommendation, §0a overrides §2 and the deviation is called out.
 > **Implements:** `rule-spec.md` §10 (D-01…D-13), plus D-14/D-15 surfaced while drafting
 > **Supersedes:** where this document differs from `rule-spec.md` §4, **this document wins** (see §5 for the three revisions and why)
 
@@ -19,6 +20,152 @@ Each decision has a recommendation, the reasoning, the alternatives I rejected, 
 **The fastest useful response is not "yes to all 15."** It's "yes to all, except D-05 and D-09" plus your answer on those two. Those two determine whether this strategy trades once a week or once a month, and whether expectancy is measurable at all.
 
 ⚠️ **Read §4 before approving anything.** The conjunction of these rules is far more selective than it looks on paper. My estimate is **~65–130 trades/year** across 5 pairs. That has consequences for how long G2 and G4 take, and it is the single largest planning fact in this project.
+
+---
+
+## 0a. Ratified answers (2026-10-25)
+
+Owner answers verbatim, then the resolved parameter. **Deviations from my recommendation are marked ⚠️ and explained.**
+
+| ID | Owner answer | Resolved as | Deviation |
+|---|---|---|---|
+| D-01 | Option A | Swing-leg on D; **D authoritative, H4 advisory** | — |
+| D-02 | Option A | Penetration `max(1p, 0.05×ATR)`–`0.60×ATR`; reclaim close ≤2 bars | — |
+| D-03 | Option A *(question answered in §0b)* | M15 swings + prior-day high/low; equal levels merge | — |
+| D-04 | No figure given; "not choppy can also mean the market being in a range" | **Efficiency Ratio ≥ 0.30 over 20 H1 bars** + swing density ≤ 6, **plus a new range-detection check** (§0c) | ⚠️ Owner added a requirement: a *ranging* market is also "choppy". ER alone does not catch a tight range with small net movement — added `range_compression` test |
+| D-05 | **Option C**, "50% of the most recent low or high" | **Prior-impulse leg**: most recent opposing swing → sweep extreme. Zone 45–55% | ⚠️ Differs from my recommendation (A). See §0d for the directional worked example |
+| D-06 | Option A | Full-range engulf + body ≥ 50% | — |
+| D-07 | Option A | Beyond sweep extreme by `max(1.5×spread, 0.15×ATR)`, min 8 pips | — |
+| D-08 | **Option C + B combined** (FVG **and** order block) | **POI = OrderBlock ∩ FVG.** Confirmation must occur inside the POI | ⚠️ Strictly more selective than my rec (A); see §0e |
+| D-09 | **Option A, fixed 1:3** | `take_profit_rr = 3.0`, `min_rr = 3.0` | ⚠️ 1:2 → 1:3. Break-even win rate rises to **25%**; see §0f |
+| D-10 | Option A | 07:00–16:00 UTC entries only | — |
+| D-11 | Option A | Setups carry across midnight UTC | — |
+| D-12 | Option A | Daily check-in + 30 min loss cooldown | — |
+| D-13 | Option A | Intervening swing, close beyond, ≥0.5×ATR displacement | — |
+| D-14 | Option A | Rank by `rr_actual` desc, then instrument A→Z | — |
+| D-15 | **Keep the old setup; record the new sweep** | Active setup is **not** replaced. A new sweep is recorded as `SUPERSEDED_CANDIDATE` in the journal and ignored for trading until the active setup resolves | ⚠️ Differs from my rec (replace). Implemented as "sticky setup" |
+| D-16 | **Option C — add pairs** | Universe expands **5 → 12 pairs** (§0g) | — |
+| D-17 | Yes | Fixtures to be written | — |
+
+**Two consequences worth stating plainly:**
+
+1. **D-09 (1:3) + D-08 (OB∩FVG) are both frequency-reducing**, and they land on the same axis. Against the §3 estimate of 35–130 trades/year, 1:3 alone cuts the accepted-trade count further (wider target), and OB∩FVG cuts confirmations again. **D-16 (add pairs) is now load-bearing, not optional** — it is the only choice in your answers that increases sample size. Even so, instrument the funnel first (§3) before trusting any of these numbers.
+2. **D-05 option C is a real strategy change from what I recommended.** It is directionally *deeper* than the displacement leg — the retracement target sits further from the sweep extreme. That means fewer, deeper fills: better average entry, fewer trades. Combined with 1:3 and OB∩FVG, expect a low-frequency, high-selectivity system. That may be exactly the strategy you want — I am flagging the composition, not objecting to the choice.
+
+---
+
+## 0b. Owner question: "is D-03 about the entry?"
+
+**No.** D-03 is about **which price levels are allowed to be the thing that gets swept** — it is a filter on rule 2 (liquidity sweep), which happens *before* the entry.
+
+Concretely, for a long setup: price must take out a prior **low**. D-03 decides *which* lows count as valid targets:
+
+- a swing low formed on the M15 chart, or
+- yesterday's low, or
+- (rejected for v1) the Asian-session low, London low, etc.
+
+Why it matters: "liquidity" in your checklist means *stops sitting above/below a visible level*. If you count too many levels, everything looks like a sweep; if too few, you never get one. The entry itself is R4 (retracement) + R5 (engulfing) — D-03 never touches it.
+
+---
+
+## 0c. D-04 — adding the range check the owner asked for
+
+Owner: *"not choppy can also mean the market being in a range."*
+
+Correct, and ER alone misses it. A market can oscillate in a tight band with a decent net move and still be untradeable. Added as a second, independent condition:
+
+```
+range_compression = (highest(high, 20 H1) - lowest(low, 20 H1)) / ATR(H1, 20)
+pass if range_compression >= InpMinRangeATR   (default 2.0)
+```
+
+**Plain meaning:** the last 20 hours must span at least **2× the average H1 bar range**. Below that, price is coiled in a range too tight for a 1:3 target to be reachable. This is not a chop detector so much as a *"is there room to move"* detector — which is precisely what a rage-bound market fails.
+
+R3a now requires: `ER ≥ 0.30` **AND** `swing_density ≤ 6` **AND** `range_compression ≥ 2.0`.
+
+---
+
+## 0d. D-05 option C — the worked example (read this, it is the one I'd check)
+
+**Bullish setup (bias up, sweeping a low):**
+
+```
+        H0  ← most recent swing high BEFORE the sweep (= prior impulse origin)
+         \
+          \        ← the prior impulse (this is the leg we measure)
+           \
+            L0 ──────── sweep extreme (the low that got taken)
+              \  ← sweep
+               \        M1  ← MSS close (price rallies through structure)
+                \      /
+                 \    /
+                  \  /   ← retracement
+                   \/    ← 50% of H0→L0 ... entry zone lives HERE
+                    │
+                    └─ engulfing confirmation
+```
+
+- Leg = `H0 → L0` (the move that **created** the sweep — option C)
+- 50% level = `L0 + 0.5 × (H0 − L0)`
+- Zone = 45–55% of that leg, i.e. `±0.05 × legLen` around the midpoint
+
+**This is deeper than option A.** Option A would measure `L0 → M1` (the displacement), which sits much closer to `L0`. Option C measures all the way back to `H0`, so the entry zone is **higher** and the stop (below `L0`) is **further away** — deeper pullback, better price, wider stop, larger position-size constraint.
+
+**Why it also means fewer trades:** price has to give back more of the move to reach the zone. Many setups will expire (TTL 96 bars) before getting there. That is the trade you accepted with option C: better entries, fewer of them.
+
+**Mirror for bearish setups** (bias down, sweeping a high): leg = most recent swing **low** → sweep extreme high.
+
+---
+
+## 0e. D-08 — OB ∩ FVG as the POI
+
+Owner asked for **both** order block and fair value gap, combined. Implemented as an **intersection** — both must define an overlapping price area, and that overlap is the point of interest (POI).
+
+| Component | Definition (bullish case) |
+|---|---|
+| **Order block** | The last **down** candle before the displacement that broke structure. Zone = its `low → high` |
+| **Fair value gap** | Three consecutive M15 bars `a, b, c` where `low[c] > high[a]` (a price gap never traded). Zone = `high[a] → low[c]` |
+| **POI (combined)** | `lo = max(OB.low, FVG.high_of_a)`, `hi = min(OB.high, FVG.low_of_c)`. Invalid if `lo > hi` |
+
+Rule 5 then requires the engulfing candle's range to **overlap the POI**. If no OB and FVG overlap exists in the displacement, **there is no setup** — that is the strict reading of "combination of both".
+
+**Cost of this choice:** this is the most selective thing in your whole rule set. An OB and an FVG must coexist in the same displacement *and* overlap. If G2 shows almost no trades, this is the first place to look — the single relaxation would be `InpRequireFVG=false` (order block only) or `InpRequireOB=false` (FVG only). Both are exposed as EA inputs so you can measure the difference rather than argue about it.
+
+---
+
+## 0f. D-09 — 1:3 changes what "win rate" means
+
+| Target | Break-even win rate | Expected win rate | Consequence |
+|---|---|---|---|
+| 1:2 | 33.3% | ~40–45% | comfortable |
+| **1:3** | **25.0%** | **~28–33%** | thin margin; needs decent edge |
+| 1:3 (if my estimate is optimistic) | 25.0% | ~25% | break-even before costs — **fails** |
+
+Break-even at 1:3 is 25%. Costs make the true break-even ~27–29%. A 1:3 system with 30% winners is genuinely profitable; one with 26% is not. **The margin between success and failure is ~3 percentage points of win rate, over a sample of maybe 60–120 trades per year.**
+
+Practical meaning: **you will not be able to tell whether this works from the first year of data.** That is a statement about sample size, not about your rules. Expect to need 200+ trades before the win rate is distinguishable from break-even at any confidence. Plan the backtest history (3–5 years) accordingly.
+
+Also: because TP is derived as `3 × SL_distance` from a **structural** stop, on wide-stop setups the target can land far beyond any real structure. The EA records `tp_beyond_structure` on every trade for exactly this reason — if more than ~40% of trades have targets outside the prior range, 1:3 is fighting the structure and a structure-based exit (D-09 option b/c) deserves reconsideration at G2.
+
+---
+
+## 0g. D-16 — the 12-pair universe
+
+Owner chose "add pairs". Proposed set, grouped by why:
+
+| Group | Pairs | Rationale |
+|---|---|---|
+| **Original majors** | EUR_USD, GBP_USD, AUD_USD, USD_JPY, USD_CAD | Baseline — keeps results comparable to any earlier tests |
+| **USD crosses** | USD_CHF, NZD_USD | More USD-side setups; cheap diversification *within* the existing logic |
+| **JPY crosses** | EUR_JPY, GBP_JPY, AUD_JPY | High volatility, clean sweep/MSS behaviour; these are the pairs ICT-style models are usually built on |
+| **EUR/GBP crosses** | EUR_GBP, GBP_AUD | Low USD correlation — genuinely new setups, not the same USD trade in a fifth costume |
+
+**Two warnings that come with 12 pairs:**
+
+1. **Correlation, not diversification.** `EUR_JPY` is roughly `EUR_USD × USD_JPY` — it is not an independent bet. With 12 pairs the net-currency exposure cap (`RSK-04`) stops being a nicety and becomes the primary risk control. Without it, a single USD move can open 8 simultaneous positions and "0.75% risk per trade" becomes ~6%.
+2. **Sample size gains are real but partial.** Adding 7 correlated-ish pairs adds maybe 4–5 *independent* bets, not 7. It roughly doubles-to-triples trade count — helpful, not a solution to §0f's sample problem.
+
+**Universe is config, not code.** The EA runs per-chart on whatever symbol you attach it to; the 12-pair list is a testing plan, not a hard-coded array.
 
 ---
 
@@ -441,18 +588,21 @@ strategy:
     er_timeframe: H1
     er_min: 0.30
     max_swing_density: 6
+    min_range_atr: 2.0                  # added per owner (D-04, see 0c)
   R3b_STRUCTURE_SHIFT:
     mss_level_source: intervening_swing
     require_close_beyond: true
     max_bars_after_sweep: 24
     min_displacement_atr: 0.5
   R4_ENTRY_RETRACE:
-    retrace_anchor: displacement_leg
+    retrace_anchor: prior_impulse        # RATIFIED D-05 option C
     retrace_target: 0.50
     zone_low: 0.45          # §3 argues for 0.40
     zone_high: 0.55         # §3 argues for 0.60
     setup_ttl_bars: 96
   R5_ENGULFING_CONFIRMATION:
+    require_poi: true                   # RATIFIED D-08: OB and FVG combined
+    poi_source: order_block_and_fvg     # intersection, not either/or
     engulf_mode: full_range
     min_body_ratio: 0.50
     zone_overlap_required: true
@@ -463,7 +613,7 @@ strategy:
     sl_anchor: sweep_extreme
     sl_buffer: max(1.5 * spread, 0.15 * atr14)
     min_sl_pips: 8
-    min_rr: 2.0
+    min_rr: 3.0                         # RATIFIED D-09 (was 2.0)
   R8_MENTAL_STATE:
     require_daily_checkin: true
     force_trade_cooldown_min: 30
@@ -473,7 +623,7 @@ strategy:
     count_scope: opened
   exits:
     take_profit: fixed_rr
-    take_profit_rr: 2.0
+    take_profit_rr: 3.0                 # RATIFIED D-09 (was 2.0)
     time_stop_bars: null
   sessions:
     entries: london_and_ny     # 07:00-16:00 UTC DST-aware

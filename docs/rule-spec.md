@@ -2,7 +2,7 @@
 
 > **Version:** 0.1.0-draft
 > **Date:** 2026-10-25
-> **Status:** **DRAFT — G1 NOT PASSED.** Every `PROPOSED` value below needs owner ratification (see §10). G1 passes only when no `TBD` and no `PROPOSED` remains in a normative position.
+> **Status:** **D-01…D-15 RATIFIED 2026-10-25** (see `decisions.md` §0a). G1 remains open on fixtures only (D-17 = yes). Where §4 below still says `PROPOSED`, the ratified value in `decisions.md` §0a governs.
 > **Authority:** `docs/source/Trading_Checklist.pdf` ("01C — TRADING CHECKLIST (STRICT RULES)"). Where this document and the checklist disagree, **the checklist wins** and this document is wrong.
 > **Implements:** PRD v2 `STR-01`, `STR-02`, `STR-03`, `STR-05`, `STR-06`
 > **Draft answers:** `docs/decisions.md` — proposed answers to every decision below, for owner redline. Where they differ from §4, `decisions.md` wins (§4 revisions listed there).
@@ -214,7 +214,7 @@ Swing = {index, price, kind: "high"|"low", confirmed_at_index}
 | **Checklist intent** | "Valid liquidity retracement (e.g. 50%). Setup aligns with bias. No proper 50% retracement = NO TRADE" |
 | **Interpretation** | After the MSS, price retraces into the **50% area of the displacement leg** and the entry is taken from there. |
 | **Granularity** | M15 |
-| **Parameters** | `retrace_anchor = "sweep_extreme_to_mss_close"` · `retrace_target = 0.50` · `zone_low = 0.45` · `zone_high = 0.55` · `setup_ttl_bars = 96` |
+| **Parameters** | `retrace_anchor = "prior_impulse"` **(RATIFIED D-05 option C** — most recent opposing swing → sweep extreme, *not* the displacement leg) · `retrace_target = 0.50` · `zone_low = 0.45` · `zone_high = 0.55` · `setup_ttl_bars = 96` |
 | **Definition** | `leg_len = abs(mss_close - sweep_extreme)`; for a long setup `zone = [mss_close - zone_high×leg_len, mss_close - zone_low×leg_len]`. Pass when any completed M15 bar's range **intersects** `zone` before `setup_ttl_bars`. |
 | **Fails when** | Price never reaches the zone (setup expires); price closes beyond `sweep_extreme` (invalidation — priority over a late retrace) |
 | **Evidence** | `leg_len_pips`, `zone_low`, `zone_high`, `retrace_bar_ts`, `retrace_depth` (actual %) |

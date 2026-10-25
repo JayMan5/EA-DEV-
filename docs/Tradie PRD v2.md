@@ -144,7 +144,7 @@ Every gate has an owner, a method, pass criteria and a defined fail action. **No
 | Area | Included |
 |---|---|
 | Venue | OANDA v20 REST (primary). Alternate venues are a separate future decision |
-| Instruments | `EUR_USD, GBP_USD, AUD_USD, USD_JPY, USD_CAD` (configurable allowlist) |
+| Instruments | **12-pair universe** (ratified D-16): `EUR_USD, GBP_USD, AUD_USD, USD_JPY, USD_CAD, USD_CHF, NZD_USD, EUR_JPY, GBP_JPY, AUD_JPY, EUR_GBP, GBP_AUD`. Configurable; `RSK-04` currency cap is mandatory at this size |
 | Decision cadence | M15 candle close; HTF context from H1 / H4 / broker-D |
 | Strategy | One strategy, one rule set, versioned |
 | Entries | Market orders with SL + TP attached on fill |
@@ -152,12 +152,13 @@ Every gate has an owner, a method, pass criteria and a defined fail action. **No
 | Research | Cost-aware event-driven backtester, walk-forward OOS reporting |
 | Operations | systemd service, crash-safe state, circuit breakers, Telegram reporting, off-host watchdog |
 | Interface | CLI only |
+| **Research tooling** | **MT5 EA (`mt5/Tradie.mq5`) — added 2026-10-25.** A second implementation of the same ratified rule set, for Strategy Tester backtests and demo forward-testing. It exists to unblock validation while G0 is unresolved, **not** to replace the Python runtime. Accepted cost: a second implementation, which is a parity risk (see INV-1) |
 
 ### 4.2 Out of scope — do not build
 
 | Item | Reason |
 |---|---|
-| MT4/MT5, Wine, X11 | Fragile headless; adds points of failure. **Revisit only if G0 fails** |
+| **MT5 as the production runtime** (Wine/X11, headless terminals, bridge vendors) | Fragile; adds points of failure. Production stays OANDA REST + Python |
 | TradingView | Not needed; OANDA data is sufficient |
 | GUI / web dashboard | Not until v1.0 has traded live for 3 months. Also constrained by OANDA's data-redistribution terms |
 | Multi-user, RBAC, auth | Single operator. Adding users adds an attack surface with no benefit |
@@ -280,7 +281,7 @@ L1  trade cap       → no new entries once cap reached
 | ID | Requirement | Default | Rationale |
 |---|---|---|---|
 | **RSK-01** | Risk per trade | **0.5–1.0%** (default 0.75%) | Narrowed from 1–2%: 2% × 3 trades = 6% daily exposure on an unproven system is unjustifiable. Widen after 100 profitable live trades |
-| **RSK-02** | Minimum reward:risk at entry | ≥ 2.0 | Computed on the *actual* SL/TP, asserted before submission; violations are rejections, and any observed avg RR < 2.0 in reporting indicates a bug |
+| **RSK-02** | Reward:risk at entry | **3.0** (ratified D-09, was 2.0) | TP = 3 × SL distance. Break-even win rate is 25% (≈27–29% after costs); see `decisions.md` §0f for the sample-size consequence |
 | **RSK-03** | Max concurrent positions | 2 | 5 pairs are ~2 independent bets |
 | **RSK-04** | **Net currency exposure cap** | ≤ 2.0% aggregate risk per currency | 4 USD-major pairs are one trade in four costumes. This is the v1 gap that would have mattered most |
 | **RSK-05** | Trade cap per `trading_day` | 3 | Hard stop; resets at 00:00 UTC |
