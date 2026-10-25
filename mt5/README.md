@@ -10,7 +10,7 @@ A MetaTrader 5 Expert Advisor that implements the ratified rule set from `docs/r
 |---|---|
 | **What it is** | A faithful implementation of the 9-rule checklist that you can compile, backtest in the Strategy Tester, and forward-test on demo |
 | **What it is not** | The system in `docs/Tradie PRD v2.md`. It has **no** crash-safe state, **no** order reconciliation, **no** idempotency, **no** circuit-breaker persistence, **no** news blackout, and **no** portfolio-level currency-exposure cap |
-| **Compile status** | **Not compiled by the author.** Written against documented MQL5 APIs and syntax-checked for balanced structure only. If MetaEditor reports an error, send me the line number and the message |
+| **Compile status** | **Builds as of 2026-10-25.** First compile raised 2 errors + 1 warning in MetaEditor, all fixed (see "Build history"). Subsequent errors, if any, are new — send the line number |
 | **Live use** | Don't. Demo only until G2–G4 in the PRD are satisfied |
 
 **Why this exists:** `G0` (OANDA v20 API available for your jurisdiction) is unresolved and blocks the whole Python live path. An MT5 EA sidesteps it entirely — any broker's MT5 demo gives you a backtester and a forward-test environment today. That is a genuine unblock, not a workaround.
@@ -71,6 +71,19 @@ Tradie: no trade - R3a: range 1.62xATR < 2.00 (ranging)
 Tradie: no trade - R5: OB and FVG do not overlap
 Tradie: no trade - R4: zone [1.08190-1.08266] not reached
 ```
+
+---
+
+## Build history
+
+| Date | Issue | Fix |
+|---|---|---|
+| 2026-10-25 | `wrong parameters count` ×2 — `built-in: int iATR(const string, ENUM_TIMEFRAMES, int)` | **MQL5's `iATR()` takes 3 arguments and returns an indicator *handle*, not a value.** This is the MQL4→MQL5 trap: MQL4's `iATR(sym, tf, period, shift)` does not exist. Now `GetATRHandle()` caches handles per (timeframe, period) and `ATRValue()` reads the value with `CopyBuffer()`. Handles are released in `OnDeinit()` |
+| 2026-10-25 | `version '0.10' is incompatible with MQL5 Market, must be xxx.yyy` | `#property version "1.000"` |
+
+Both were my errors, not logic problems. The EA now caches ATR handles rather than recomputing, which is also faster and is the correct MQL5 pattern.
+
+**If you hit a further compile error:** the first two errors masked nothing else (MetaEditor reports all of them in one pass), so anything new is genuinely new. Send the line number and the message text.
 
 ---
 

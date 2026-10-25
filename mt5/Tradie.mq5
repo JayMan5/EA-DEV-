@@ -19,12 +19,16 @@
 //|   R8 Mental state    NOT automatable - omitted (see README)      |
 //|   R9 Trade limit     max 3 per day, 07:00-16:00 UTC only         |
 //|                                                                  |
-//|  STATUS: not compiled by the author. If MetaEditor reports an     |
-//|  error, quote the line number and it will be fixed.              |
+//|  BUILD:  first compile (2026-10-25) raised 2 errors + 1 warning,   |
+//|          all fixed:                                              |
+//|           - iATR() is 3-arg and returns a HANDLE in MQL5; values   |
+//|             now come from CopyBuffer via ATRValue()               |
+//|           - #property version must be xxx.yyy -> "1.000"          |
+//|  If MetaEditor still reports an error, quote the line number.     |
 //+------------------------------------------------------------------+
 #property copyright "Tradie"
 #property link      ""
-#property version   "0.10"
+#property version   "1.000"
 #property description "Tradie checklist EA - 9-rule forex model (research/testing)"
 
 #include <Trade\Trade.mqh>
@@ -169,6 +173,14 @@ CooldownStage g_soft;                    // stage 1: pause, no flatten
 CooldownStage g_hard;                    // stage 2: flatten + long halt
 bool          g_cooldownLogged  = false;
 
+// ATR handle cache: MQL5's iATR() returns an indicator handle, not a value.
+// Values must be read with CopyBuffer(). Cached per (timeframe, period).
+#define ATR_CACHE_MAX 8
+int           g_atrHandle[ATR_CACHE_MAX];
+int           g_atrTF[ATR_CACHE_MAX];
+int           g_atrPeriod[ATR_CACHE_MAX];
+int           g_atrCount = 0;
+
 // D-12 (rule 8 proxy): cooldown after a realised loss
 datetime      g_lastLossTime    = 0;
 string        g_gvLastLoss      = "";
@@ -195,6 +207,9 @@ bool   HasPositionOnSymbol();
 int    CountOpenPositions();
 int    CountTradesToday();
 double CalcLots(double entry, double sl, double &riskMoneyOut);
+int    GetATRHandle(ENUM_TIMEFRAMES tf, int period);
+double ATRValue(ENUM_TIMEFRAMES tf, int period, int shift);
+void   ReleaseIndicators();
 void   InitRealizedPnL();
 double EAOpenPnL();
 double EALossPct();
@@ -250,12 +265,55 @@ double SpreadPips()
    return(SpreadPrice() / g_pip);
   }
 
-double ATR(int tf, int shift)
+//--- create (or reuse) an ATR handle for a timeframe/period pair
+int GetATRHandle(ENUM_TIMEFRAMES tf, int period)
   {
-   double v = iATR(_Symbol, (ENUM_TIMEFRAMES)tf, 14, shift);
-   if(v <= 0.0)
+   for(int i = 0; i < g_atrCount; i++)
+      if(g_atrTF[i] == (int)tf && g_atrPeriod[i] == period)
+         return(g_atrHandle[i]);
+
+   if(g_atrCount >= ATR_CACHE_MAX)
+      return(INVALID_HANDLE);
+
+   int h = iATR(_Symbol, tf, period);
+   if(h == INVALID_HANDLE)
+      return(INVALID_HANDLE);
+
+   g_atrHandle[g_atrCount] = h;
+   g_atrTF[g_atrCount]     = (int)tf;
+   g_atrPeriod[g_atrCount] = period;
+   g_atrCount++;
+   return(h);
+  }
+
+//--- read ATR at a bar shift (0 = current forming bar, 1 = last closed)
+double ATRValue(ENUM_TIMEFRAMES tf, int period, int shift)
+  {
+   int h = GetATRHandle(tf, period);
+   if(h == INVALID_HANDLE)
       return(0.0);
-   return(v);
+
+   double buf[];
+   ArraySetAsSeries(buf, true);
+   if(CopyBuffer(h, 0, shift, 1, buf) != 1)
+      return(0.0);
+   if(buf[0] <= 0.0)
+      return(0.0);
+   return(buf[0]);
+  }
+
+void ReleaseIndicators()
+  {
+   for(int i = 0; i < g_atrCount; i++)
+      if(g_atrHandle[i] != INVALID_HANDLE)
+         IndicatorRelease(g_atrHandle[i]);
+   g_atrCount = 0;
+  }
+
+//--- convenience wrapper used by the rule engine (ATR-14)
+double ATR(ENUM_TIMEFRAMES tf, int shift)
+  {
+   return(ATRValue(tf, 14, shift));
   }
 
 //--- is bar[1] a bullish full-range engulf of bar[2]?
@@ -462,7 +520,7 @@ bool StructureClean(string &why)
          if(l < lo)
             lo = l;
         }
-      double atrH1 = iATR(_Symbol, InpStructureTF, 20, 1);
+      double atrH1 = ATRValue(InpStructureTF, 20, 1);
       if(atrH1 > 0.0 && hi > lo)
         {
          double ratio = (hi - lo) / atrH1;
@@ -1658,11 +1716,25 @@ int OnInit()
       return(INIT_PARAMETERS_INCORRECT);
      }
 
+   //--- ATR handles (MQL5: iATR returns a handle, values come from CopyBuffer)
+   int hM15 = GetATRHandle(PERIOD_M15, 14);
+   int hStr = GetATRHandle(InpStructureTF, 20);
+   if(hM15 == INVALID_HANDLE)
+      Print("Tradie WARNING: ATR(M15,14) handle not ready yet; it will be retried each tick");
+   if(hStr == INVALID_HANDLE)
+      Print("Tradie WARNING: ATR(", EnumToString(InpStructureTF), ",20) handle not ready yet; retried each tick");
+
+   PrintFormat("Tradie ATR check: M15 ATR14=%.5f | %s ATR20=%.5f",
+               ATRValue(PERIOD_M15, 14, 1),
+               EnumToString(InpStructureTF), ATRValue(InpStructureTF, 20, 1));
+
    return(INIT_SUCCEEDED);
   }
 
 void OnDeinit(const int reason)
   {
+   ReleaseIndicators();
+
    PrintFormat("Tradie stop: evaluations=%d rejections=%d | EA realised %.2f | SOFT %.2f%% of %.2f | HARD %.2f%% of %.2f | last=%s",
                g_evaluations, g_rejections, g_eaRealized,
                StageLossPct(g_soft), g_soft.refCapital,
