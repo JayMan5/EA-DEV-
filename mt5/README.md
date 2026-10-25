@@ -108,6 +108,8 @@ Then apply the change and confirm with the three Journal lines below. The route 
 
 ### Tester Settings tab — RUN A (funnel)
 
+> The Settings tab is separate from the Inputs tab. A preset only fills Inputs — **Period, Symbol, Date and Modelling must be set on Settings**, and Period must be **M15**.
+
 | Field | Value |
 |---|---|
 | Expert | `Advisors\Tradie.ex5` |
@@ -133,6 +135,20 @@ Only three values differ from the stock defaults:
 | `InpMinSLPips` | 8.0 | **12.0** | 8.5-pip stops on EURUSD are spread noise, not structure |
 
 Everything else stays at default. Full list in the preset file.
+
+### Reading the Inputs tab
+
+The **Start / Step / Stop** columns are the optimiser's sweep columns. They are always displayed and are **ignored while Optimization = Disabled** — they can be left at their defaults. Only the **Value** column matters.
+
+Three values should differ from their `Start` column (the compiled default) after loading RUN A. If they don't, the preset did not apply:
+
+| Input | `Start` (default) | `Value` (RUN A) |
+|---|---|---|
+| Dry run | `false` | **`true`** |
+| Min efficiency ratio | `0.3` | **`0.2`** |
+| Minimum SL distance (pips) | `8.0` | **`12.0`** |
+
+Everything else should show `Value == Start`.
 
 ### Confirm the preset actually applied
 
