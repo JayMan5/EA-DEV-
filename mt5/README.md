@@ -164,6 +164,50 @@ Tradie ATR check: M15 ATR14=0.000xx | PERIOD_H1 ATR20=0.000xx
 
 **If those lines are missing**, the EA did not initialise properly or the Journal is filtered — check the **Experts** tab, not just Journal.
 
+### RUN D and RUN E — the A/B test you actually want first (2026-10-25)
+
+**Do these before RUN B.** The measured signal rate is 2.8/year/pair (see `results/2026-10-25-eurusd-5y.md`), which is too low to validate anything. D-20 changes where the entry goes. These two runs measure whether that helps, and they are the same build and the same data — only two inputs differ.
+
+| | RUN D (option B) | RUN E (control, option A) |
+|---|---|---|
+| Preset | `04-zone-entry.set` | `05-poi-control.set` |
+| `InpEntryMode` | `0` = entry at the 50% zone | `1` = entry at the POI (old behaviour) |
+| `InpMaxSLATR` | `6.0` | `3.0` |
+| Expected signals | unknown — this is the measurement | ~14 (must reproduce RUN A) |
+
+Everything else is identical to `01-funnel-dryrun.set`: EURUSDm, M15, 2021.10.01 → 2026.10.23, ER 0.20, MinSL 12, dry run.
+
+**RUN E is not optional.** If it does not reproduce ~14 signals, something other than `InpEntryMode` changed and RUN D cannot be trusted. Last time I predicted a signal count I was wrong by 4×, so this run exists to keep me honest.
+
+**Settings tab** — change **only** these two from whatever you used for RUN A:
+
+| Field | Set to |
+|---|---|
+| Deposit | `500` |
+| Leverage | `1:100` |
+| Period | `M15` ← must be M15, not H1 |
+| Dates | custom, `2021.10.01` → `2026.10.23` |
+| Modelling | `1 minute OHLC` |
+| Optimization | `Disabled` |
+
+**What to look for in the Experts log** — the two new witness lines:
+
+```
+Tradie D-20: entry=AT_ZONE (option B) | OB/FVG = confluence score 0-3, minConf=0 | max chase 0.50xATR
+Tradie D-20: conf0=.. conf1=.. conf2=.. conf3=.. | signals by score: ../../.. | mode=zone minConf=0
+```
+
+If the first line says `entry=AT_POI` the preset did not apply. The second line is the score distribution — it tells us what `InpMinConfluence` should be for the run after.
+
+**Two new rejection reasons will appear. Neither is a bug:**
+
+| Message | Meaning |
+|---|---|
+| `R4/D-20: confirm N.Np from 50% zone` | price reversed before retracing into the zone. The pip figure is how far short it stopped — if these are mostly 1–3 pips, tightening `InpZoneLow/High` to 42–58 is the fix. If they are 20+, the setups genuinely never retrace. |
+| `R4/D-20: entry N.Np above zone (chase)` | price blew through the zone and kept going; the entry would no longer be "at the 50%". |
+
+**One thing that may get worse, and is worth watching:** the target is 3× the stop, and the stop is now much wider (zone → sweep extreme, roughly half the leg). So the profit target sits further away in pips than it used to. Expect a **lower hit rate at the same 1:3**. If it collapses to near zero, the thing to question is the fixed 1:3 (D-09), not this change.
+
 ### RUN B (real trades) — only after RUN A looks sane
 
 Same Settings tab, but **Modelling = Every tick based on real ticks** and **Delays = Random delay**. Inputs: `02-realrun.set` (identical to RUN A except `InpDryRun=false`).
@@ -248,6 +292,7 @@ Also visible: `SL 8.5 p` — inside EURUSD noise. `InpMinSLPips = 8` is too low;
 |---|---|---|
 | 2026-10-25 | `wrong parameters count` ×2 — `built-in: int iATR(const string, ENUM_TIMEFRAMES, int)` | **MQL5's `iATR()` takes 3 arguments and returns an indicator *handle*, not a value.** This is the MQL4→MQL5 trap: MQL4's `iATR(sym, tf, period, shift)` does not exist. Now `GetATRHandle()` caches handles per (timeframe, period) and `ATRValue()` reads the value with `CopyBuffer()`. Handles are released in `OnDeinit()` |
 | 2026-10-25 | `version '0.10' is incompatible with MQL5 Market, must be xxx.yyy` | `#property version "1.000"` |
+| 2026-10-25 | D-20 behaviour change (option B) — **not a fix, a design change** | Entry must now occur inside the 50% zone; `BuildPOI` split into `BuildPOIInfo` (reports) + `BuildPOI` (legacy gate). Version → `1.100` |
 
 Both were my errors, not logic problems. The EA now caches ATR handles rather than recomputing, which is also faster and is the correct MQL5 pattern.
 

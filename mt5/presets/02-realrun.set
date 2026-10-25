@@ -1,5 +1,5 @@
-; Tradie RUN B - real trades. Only InpDryRun differs from RUN A
-; Use only after RUN A's funnel looks sane
+; Tradie RUN F - real orders, current configuration (D-20 option B, entry at the 50% zone)
+; Identical to 04-zone-entry.set except InpDryRun. Run 04 first and check the funnel.
 InpMagic=20261025
 InpSizingMode=0
 InpFixedLots=0.01
@@ -15,7 +15,7 @@ InpCooldownReanchor=true
 InpLossCooldownMin=30
 InpRewardRisk=3.0
 InpMinSLPips=12.0
-InpMaxSLATR=3.0
+InpMaxSLATR=6.0
 InpSLBufferATR=0.15
 InpSLBufferSpread=1.5
 InpMaxConcurrent=2
@@ -48,6 +48,9 @@ InpRetraceAnchor=0
 InpZoneLow=0.45
 InpZoneHigh=0.55
 InpSetupTTLBars=96
+InpEntryMode=0
+InpMinConfluence=0
+InpMaxEntryPastZoneATR=0.50
 InpRequireOB=true
 InpRequireFVG=true
 InpRequireZoneTouch=true

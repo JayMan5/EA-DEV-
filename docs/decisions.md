@@ -168,7 +168,7 @@ So rule 8 is now **partially implemented in the EA** rather than absent. The che
 
 ---
 
-## 0j. D-05 vs D-08 — the zone and the POI are in different places (UNRESOLVED)
+## 0j. D-05 vs D-08 — the zone and the POI are in different places (RESOLVED — see 0k)
 
 Found by the first backtest (`mt5/README.md` §First backtest results, finding 5). **This needs an owner decision before the rule set can be called faithful.**
 
@@ -210,7 +210,7 @@ That is defensible as *"price retraced at least 50%"*, but it is **not** *"entry
 | **B** | Entry must occur **inside the 50% zone**; POI used only as confluence/quality score | Entry at 50%, wider stop (zone → sweep extreme), fewer trades | **Most faithful to the checklist.** Recommend |
 | **C** | POI must **intersect** the 50% zone | Nearly never occurs (structurally separated) | Would produce ~0 trades |
 
-**Recommendation: B.** It restores the checklist's literal rule 4 (enter at the retracement), gives a structurally sane stop, and keeps the OB/FVG work as a quality filter rather than a location. Cost: fewer setups, and the POI becomes a scoring input rather than a gate — which weakens D-08 from "OB and FVG required" to "OB/FVG improves ranking".
+**Recommendation: B — and this was adopted on 2026-10-25 as D-20, see §0k.** It restores the checklist's literal rule 4 (enter at the retracement), gives a structurally sane stop, and keeps the OB/FVG work as a quality filter rather than a location. Cost: fewer setups, and the POI becomes a scoring input rather than a gate — which weakens D-08 from "OB and FVG required" to "OB/FVG improves ranking".
 
 **If B is adopted,** `InpRequireOB` / `InpRequireFVG` change meaning: instead of gating, they add a confluence score used in `D-14` ranking. That is a code change of roughly 40 lines.
 
@@ -220,6 +220,65 @@ That is defensible as *"price retraced at least 50%"*, but it is **not** *"entry
 
 - `InpMinSLPips = 8` should rise to **12** regardless of which option is chosen — an 8.5-pip stop on EURUSD is noise.
 - `InpERMin = 0.30` rejected 69.4% of all bars (ER median 0.14, p90 0.26). **0.20** is the better starting point. This was always my number (D-04 was delegated to me), not the owner's.
+
+---
+
+## 0k. D-20 — entry location: RESOLVED as option B (2026-10-25)
+
+§0j left this open. It is now decided and implemented.
+
+**Owner instruction: "okay, option b first."** Implemented in `mt5/Tradie.mq5`.
+
+### D-20 — the entry must occur inside the 50% zone (RATIFIED)
+
+| | Option A (previous) | **Option B (now default)** |
+|---|---|---|
+| R4 zone | price must *ever* have touched it | the **confirmation bar must trade into it** |
+| R5 OB/FVG | hard gates (`InpRequireOB`, `InpRequireFVG`) | **confluence score 0–3**, no longer a gate |
+| Entry price | at the POI, near the sweep extreme | at the confirmation bar, in the zone |
+| Stop | tight (a few pips), inside M15 noise | zone → sweep extreme, ~half the leg |
+| Checklist fidelity | "retraced 50%" | **"enters at the 50% retracement"** |
+
+**Why B.** The checklist's rule 4 is *enter at the valid liquidity retracement*. Option A only checked that price had passed through the zone on its way to the sweep, which is almost always true and carries no information. B checks the thing the rule actually says.
+
+**What this costs, stated plainly:**
+
+1. **D-08 is weakened by design.** "OB **and** FVG required" becomes "OB and FVG improve the score". That is a real loss of constraint and it was flagged in §0j before the decision. The mitigation is `InpMinConfluence`: set it to 2 and the OB/FVG requirement comes back as a threshold on the same terms. The plan is to run once at 0 to measure the ceiling, then decide the threshold from the score distribution the EA now reports.
+2. **The 1:3 target gets much further away.** The target is a multiple of the stop, and the stop just got structurally wider. In option A a 12-pip stop meant a 36-pip target; in zone mode a 40-pip stop means a 120-pip target. Expect a **lower hit rate on the same R:R**. This is arithmetic, not a bug — but it is the main reason option B might produce a worse backtest while being more correct. If the hit rate collapses, the honest response is to question the fixed 1:3 (D-09), not to go back to A.
+3. **`InpMaxSLATR` had to be raised 3.0 → 6.0** in the zone preset. Not tuning: with the entry mid-leg, a 3×ATR cap would reject the very trades the change creates.
+
+### New inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| `InpEntryMode` | `0` = `ENTRY_AT_ZONE` | `1` = `ENTRY_AT_POI` restores option A exactly, for A/B comparison on one build |
+| `InpMinConfluence` | `0` (off) | minimum 0–3 POI score in zone mode |
+| `InpMaxEntryPastZoneATR` | `0.50` | don't chase: skip if price has already run past the zone edge by more than this |
+
+### Confluence score (0–3)
+
+| Point | Awarded when |
+|---|---|
+| +1 | an order block exists |
+| +1 | a fair value gap exists |
+| +1 | the POI **overlaps the 50% zone** — an institutional footprint *at* the retracement |
+
+The last point is the one that matters: OB and FVG near the sweep extreme are, in zone mode, in the wrong place. A POI that actually sits in the zone is a much stronger signal than either alone.
+
+### How this is being tested
+
+Two presets that differ in **exactly two fields**:
+
+- `mt5/presets/04-zone-entry.set` — `InpEntryMode=0`, `InpMaxSLATR=6.0` (RUN D)
+- `mt5/presets/05-poi-control.set` — `InpEntryMode=1`, `InpMaxSLATR=3.0` (RUN E, control)
+
+The control exists because the last prediction about signal count was wrong by a factor of four. Comparing A and B on the same build, same data, same five years makes the answer unambiguous.
+
+`OnDeinit` now prints the score distribution, which is the input to picking `InpMinConfluence`:
+
+```
+Tradie D-20: conf0=.. conf1=.. conf2=.. conf3=.. | signals by score: ../../../.. | mode=zone minConf=0
+```
 
 ---
 

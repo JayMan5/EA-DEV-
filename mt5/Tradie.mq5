@@ -13,7 +13,8 @@
 //|   R3a Structure      H1 efficiency ratio + swing density + range |
 //|   R3b MSS            close beyond intervening swing + disp.      |
 //|   R4 Retrace         50% of PRIOR IMPULSE (option C), 45-55%     |
-//|   R5 Confirmation    full-range engulf inside POI (OB and FVG)   |
+//|   R5 Confirmation    full-range engulf INSIDE the 50% zone;      |
+//|                      OB/FVG becomes a 0-3 confluence score (D-20) |
 //|   R6 Risk            fixed risk %, SL beyond sweep, TP at 1:3    |
 //|   R7 Alignment       assertion (direction == bias)               |
 //|   R8 Mental state    NOT automatable - omitted (see README)      |
@@ -28,7 +29,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Tradie"
 #property link      ""
-#property version   "1.000"
+#property version   "1.100"
 #property description "Tradie checklist EA - 9-rule forex model (research/testing)"
 
 #include <Trade\Trade.mqh>
@@ -47,6 +48,13 @@ enum ENUM_RETRACE_ANCHOR
   {
    RETRACE_PRIOR_IMPULSE     = 0,  // C: most recent swing -> sweep extreme (RATIFIED)
    RETRACE_DISPLACEMENT_LEG  = 1,  // A: sweep extreme -> MSS close
+  };
+
+// D-20: where the entry must physically occur (decisions.md section 0j)
+enum ENUM_ENTRY_MODE
+  {
+   ENTRY_AT_ZONE             = 0,  // B: confirmation bar must trade into the 50% zone
+   ENTRY_AT_POI              = 1,  // A: legacy - engulf must overlap the OB/FVG POI
   };
 
 input group             "=== Identity ==="
@@ -76,7 +84,7 @@ input int               InpLossCooldownMin    = 30;         // Minutes with no e
 input group             "=== Risk (R6) ==="
 input double            InpRewardRisk         = 3.0;        // Target RR (RATIFIED D-09 = 1:3)
 input double            InpMinSLPips          = 8.0;        // Minimum SL distance (pips)
-input double            InpMaxSLATR           = 3.0;        // Max SL as multiple of M15 ATR
+input double            InpMaxSLATR           = 6.0;        // Max SL as multiple of M15 ATR (D-20: zone entry needs the room)
 input double            InpSLBufferATR        = 0.15;       // SL buffer beyond sweep extreme (x ATR)
 input double            InpSLBufferSpread     = 1.5;        // ...or this many spreads, whichever larger
 input int               InpMaxConcurrent      = 2;          // Max simultaneous positions (all symbols)
@@ -120,9 +128,14 @@ input double            InpZoneLow            = 0.45;       // Zone start (fract
 input double            InpZoneHigh           = 0.55;       // Zone end
 input int               InpSetupTTLBars       = 96;         // Setup expires after N M15 bars
 
+input group             "=== R4/R5 Entry location (D-20) ==="
+input ENUM_ENTRY_MODE   InpEntryMode          = ENTRY_AT_ZONE; // Where the entry must occur
+input int               InpMinConfluence      = 0;          // Min POI score 0-3 (zone mode, 0=off)
+input double            InpMaxEntryPastZoneATR= 0.50;       // Max entry beyond zone edge (x ATR, 0=off)
+
 input group             "=== R5 POI / Confirmation ==="
-input bool              InpRequireOB          = true;       // Require an order block
-input bool              InpRequireFVG         = true;       // Require a fair value gap
+input bool              InpRequireOB          = true;       // Require OB (POI mode only)
+input bool              InpRequireFVG         = true;       // Require FVG (POI mode only)
 input bool              InpRequireZoneTouch   = true;       // Price must tap the 50% zone first
 input double            InpMinBodyRatio       = 0.50;       // Minimum engulf body / range
 input double            InpMaxSpreadPoints    = 0.0;        // Max spread (points, 0 = no limit)
@@ -165,6 +178,10 @@ string        g_why      = "";       // last rejection reason (for logging)
 string        g_tag      = "";       // last diagnostic line
 int           g_evaluations = 0;
 int           g_rejections  = 0;
+
+// D-20: confluence score distribution of setups that got as far as R5
+int           g_conf[4]     = {0, 0, 0, 0};
+int           g_confSigs[4] = {0, 0, 0, 0};
 
 // D-18 / D-19: fixed-lot sizing + capital-loss cooldown
 datetime      g_lastRealizedSync = 0;    // self-heal point for realised P&L
@@ -235,6 +252,14 @@ int    FindSwings(const MqlRates &r[], int bars, int left, int right,
                   int &outIdx[], int &outKind[], double &outPx[]);
 int    GetBias(int &biasIdxNew, double &biasPxNew, int &biasIdxOld, double &biasPxOld);
 int    FindBarIndexByTime(const MqlRates &r[], int bars, datetime t);
+bool   BuildPOIInfo(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
+                    double &poiLo, double &poiHi,
+                    bool &haveOB, bool &haveFVG, bool &overlap);
+bool   BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
+                double &poiLo, double &poiHi, string &why);
+int    POIConfluence(bool haveOB, bool haveFVG, double poiLo, double poiHi,
+                     double zLo, double zHi);
+void   CountConfluence(int score);
 bool   StickyValid(const MqlRates &r[], int bars, int bias, int &outIdx,
                    double &outExtreme, double &outLevel);
 void   AdoptSticky(const MqlRates &r[], int sweepIdx, int bias, double extreme, double level);
@@ -551,18 +576,34 @@ void BuildZone(int anchorMode, double legStart, double legEnd, double &zLo, doub
   }
 
 //==================================================================
-//  R5 — POI = order block INTERSECT fair value gap
+//  D-20 confluence bookkeeping
 //==================================================================
-bool BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
-              double &poiLo, double &poiHi, string &why)
+void CountConfluence(int score)
   {
-   poiLo = 0.0;
-   poiHi = 0.0;
-   why = "";
+   if(score < 0) score = 0;
+   if(score > 3) score = 3;
+   g_conf[score]++;
+  }
+
+//==================================================================
+//  R5 — POI = order block INTERSECT fair value gap
+//
+//  D-20: this used to be a gate. It now REPORTS what it found so the
+//  caller can decide: in ENTRY_AT_POI mode the flags are enforced, in
+//  ENTRY_AT_ZONE mode they become a 0-3 confluence score.
+//==================================================================
+bool BuildPOIInfo(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
+                  double &poiLo, double &poiHi,
+                  bool &haveOB, bool &haveFVG, bool &overlap)
+  {
+   poiLo  = 0.0;
+   poiHi  = 0.0;
+   haveOB = false;
+   haveFVG= false;
+   overlap= false;
 
    //--- order block: last opposing candle before the MSS bar
    double obLo = 0.0, obHi = 0.0;
-   bool haveOB = false;
    for(int b = mssIdx + 1; b <= sweepIdx; b++)
      {
       bool opposing = (dir > 0) ? (r[b].close < r[b].open) : (r[b].close > r[b].open);
@@ -574,15 +615,9 @@ bool BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
          break;
         }
      }
-   if(InpRequireOB && !haveOB)
-     {
-      why = "R5: no order block";
-      return(false);
-     }
 
    //--- fair value gap: 3-bar imbalance inside the displacement
    double fvgLo = 0.0, fvgHi = 0.0;
-   bool haveFVG = false;
    for(int i = 1; i + 2 <= sweepIdx; i++)
      {
       if(dir > 0)
@@ -608,21 +643,23 @@ bool BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
            }
         }
      }
-   if(InpRequireFVG && !haveFVG)
-     {
-      why = "R5: no fair value gap";
-      return(false);
-     }
 
    //--- combine
    if(haveOB && haveFVG)
      {
-      poiLo = MathMax(obLo, fvgLo);
-      poiHi = MathMin(obHi, fvgHi);
-      if(poiLo > poiHi)
+      double iLo = MathMax(obLo, fvgLo);
+      double iHi = MathMin(obHi, fvgHi);
+      if(iLo <= iHi)
         {
-         why = "R5: OB and FVG do not overlap";
-         return(false);
+         poiLo   = iLo;
+         poiHi   = iHi;
+         overlap = true;
+        }
+      else
+        {
+         // no intersection: report the widest of the two as the POI
+         poiLo = MathMin(obLo, fvgLo);
+         poiHi = MathMax(obHi, fvgHi);
         }
       return(true);
      }
@@ -639,8 +676,54 @@ bool BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
       return(true);
      }
 
-   why = "R5: no POI";
    return(false);
+  }
+
+//--- legacy gate wrapper (ENTRY_AT_POI): returns false with a reason
+bool BuildPOI(const MqlRates &r[], int sweepIdx, int mssIdx, int dir,
+              double &poiLo, double &poiHi, string &why)
+  {
+   bool haveOB = false, haveFVG = false, overlap = false;
+   bool any = BuildPOIInfo(r, sweepIdx, mssIdx, dir, poiLo, poiHi, haveOB, haveFVG, overlap);
+
+   if(InpRequireOB && !haveOB)
+     {
+      why = "R5: no order block";
+      return(false);
+     }
+   if(InpRequireFVG && !haveFVG)
+     {
+      why = "R5: no fair value gap";
+      return(false);
+     }
+   if(InpRequireOB && InpRequireFVG && !overlap)
+     {
+      why = "R5: OB and FVG do not overlap";
+      return(false);
+     }
+   if(!any)
+     {
+      why = "R5: no POI";
+      return(false);
+     }
+   return(true);
+  }
+
+//--- D-20 confluence score: 0-3
+//    +1 order block present
+//    +1 fair value gap present
+//    +1 the POI sits inside the 50% zone (institutional footprint AT the retracement)
+int POIConfluence(bool haveOB, bool haveFVG, double poiLo, double poiHi,
+                  double zLo, double zHi)
+  {
+   int s = 0;
+   if(haveOB)
+      s++;
+   if(haveFVG)
+      s++;
+   if(poiHi > poiLo && RangesOverlap(poiLo, poiHi, zLo, zHi))
+      s++;
+   return(s);
   }
 
 //==================================================================
@@ -1444,9 +1527,37 @@ int Evaluate(double &entryOut, double &slOut, double &tpOut, string &whyOut, str
      }
 
    //----------- R5 POI + engulfing -----------
+   //  D-20 option B checks the LOCATION first, then the confirmation, then
+   //  the score. That ordering makes the funnel readable: every live setup
+   //  is counted against "is price at the 50%?" before the rarer engulf
+   //  test, so the counter is a real location statistic rather than one
+   //  conditional on an engulf having happened.
+   //  Option A keeps its original order byte for byte, so RUN E still
+   //  reproduces RUN A.
    double poiLo = 0.0, poiHi = 0.0;
-   if(!BuildPOI(m15, sweepIdx, mssIdx, bias, poiLo, poiHi, whyOut))
-      return(0);
+   bool   haveOB = false, haveFVG = false, poiOverlap = false;
+   BuildPOIInfo(m15, sweepIdx, mssIdx, bias, poiLo, poiHi,
+                haveOB, haveFVG, poiOverlap);
+   int    confluence = POIConfluence(haveOB, haveFVG, poiLo, poiHi, zLo, zHi);
+
+   if(InpEntryMode == ENTRY_AT_ZONE)
+     {
+      //--- the confirmation bar must have traded into the zone
+      if(!RangesOverlap(m15[1].low, m15[1].high, zLo, zHi))
+        {
+         double gap = 0.0;
+         if(bias > 0 && m15[1].low > zHi)      gap = (m15[1].low - zHi) / g_pip;  // stalled above
+         if(bias < 0 && m15[1].high < zLo)     gap = (zLo - m15[1].high) / g_pip; // stalled below
+         whyOut = StringFormat("R4/D-20: confirm %.1fp from 50%% zone [%.5f-%.5f]", gap, zLo, zHi);
+         return(0);
+        }
+     }
+   else
+     {
+      //--- legacy option A: the POI is a gate, resolved before the engulf
+      if(!BuildPOI(m15, sweepIdx, mssIdx, bias, poiLo, poiHi, whyOut))
+         return(0);
+     }
 
    bool engulfBar = false;
    if(bias > 0)
@@ -1460,10 +1571,28 @@ int Evaluate(double &entryOut, double &slOut, double &tpOut, string &whyOut, str
       return(0);
      }
 
-   if(!RangesOverlap(m15[1].low, m15[1].high, poiLo, poiHi))
+   // every setup that produced a confirmed engulfing bar is counted here,
+   // so the deinit line reports the real score distribution of the edge
+   CountConfluence(confluence);
+
+   if(InpEntryMode == ENTRY_AT_ZONE)
      {
-      whyOut = StringFormat("R5: engulf not in POI [%.5f-%.5f]", poiLo, poiHi);
-      return(0);
+      //--- OB/FVG are no longer gates - they are a score.
+      //    InpMinConfluence = 0 measures the ceiling; raise it to tighten.
+      if(InpMinConfluence > 0 && confluence < InpMinConfluence)
+        {
+         whyOut = StringFormat("R5/D-20: confluence %d < %d", confluence, InpMinConfluence);
+         return(0);
+        }
+     }
+   else
+     {
+      //--- legacy option A: the engulf must sit inside the POI
+      if(!RangesOverlap(m15[1].low, m15[1].high, poiLo, poiHi))
+        {
+         whyOut = StringFormat("R5: engulf not in POI [%.5f-%.5f]", poiLo, poiHi);
+         return(0);
+        }
      }
 
    // do not fire the same sweep twice
@@ -1477,6 +1606,24 @@ int Evaluate(double &entryOut, double &slOut, double &tpOut, string &whyOut, str
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double entry = (bias > 0) ? ask : bid;
+
+   //--- D-20: in zone mode do not chase. If price has already run past the
+   //    far edge of the zone by more than InpMaxEntryPastZoneATR, the entry
+   //    is no longer "at the 50%" - skip it rather than pay up.
+   if(InpEntryMode == ENTRY_AT_ZONE && InpMaxEntryPastZoneATR > 0.0)
+     {
+      double chaseTol = InpMaxEntryPastZoneATR * atr;
+      if(bias > 0 && (entry - zHi) > chaseTol)
+        {
+         whyOut = StringFormat("R4/D-20: entry %.1fp above zone (chase)", (entry - zHi) / g_pip);
+         return(0);
+        }
+      if(bias < 0 && (zLo - entry) > chaseTol)
+        {
+         whyOut = StringFormat("R4/D-20: entry %.1fp below zone (chase)", (zLo - entry) / g_pip);
+         return(0);
+        }
+     }
 
    double buffer = MathMax(InpSLBufferATR * atr, InpSLBufferSpread * SpreadPrice());
    double sl;
@@ -1530,10 +1677,13 @@ int Evaluate(double &entryOut, double &slOut, double &tpOut, string &whyOut, str
    slOut    = NormalizeDouble(sl, g_digits);
    tpOut    = NormalizeDouble(tp, g_digits);
 
-   tagOut = StringFormat("bias=%s sweep@%.5f mss@%.5f zone=%.5f-%.5f poi=%.5f-%.5f sl=%.1fp rr=%.1f",
+   tagOut = StringFormat("bias=%s sweep@%.5f mss@%.5f zone=%.5f-%.5f poi=%.5f-%.5f conf=%d sl=%.1fp(%.1fxATR) atr=%.1fp rr=%.1f",
                          (bias > 0 ? "up" : "down"), sweepExtreme, mssLevel,
-                         zLo, zHi, poiLo, poiHi, slDist / g_pip, InpRewardRisk);
+                         zLo, zHi, poiLo, poiHi, confluence,
+                         slDist / g_pip, (atr > 0.0 ? slDist / atr : 0.0),
+                         atr / g_pip, InpRewardRisk);
 
+   g_confSigs[(confluence < 0 ? 0 : (confluence > 3 ? 3 : confluence))]++;
    return(bias);
   }
 
@@ -1650,12 +1800,17 @@ int OnInit()
    PrintFormat("Tradie init: %s | pip=%.5f digits=%d | server-UTC offset=%+.1fh | tester=%d",
                _Symbol, g_pip, g_digits, g_gmtSec / 3600.0,
                (int)MQLInfoInteger(MQL_TESTER));
-   PrintFormat("Tradie rules: bias=%s sweep=ATR-bound MSS=close+disp retrace=%s zone=%.2f-%.2f POI=OB%sFVG%s RR=1:%.1f",
+   PrintFormat("Tradie rules: bias=%s sweep=ATR-bound MSS=close+disp retrace=%s zone=%.2f-%.2f RR=1:%.1f",
                EnumToString(InpBiasTF),
                (InpRetraceAnchor == RETRACE_PRIOR_IMPULSE ? "prior_impulse" : "displacement"),
-               InpZoneLow, InpZoneHigh,
-               (InpRequireOB ? "+" : "off"), (InpRequireFVG ? "+" : "off"),
-               InpRewardRisk);
+               InpZoneLow, InpZoneHigh, InpRewardRisk);
+
+   if(InpEntryMode == ENTRY_AT_ZONE)
+      PrintFormat("Tradie D-20: entry=AT_ZONE (option B) | OB/FVG = confluence score 0-3, minConf=%d | max chase %.2fxATR",
+                  InpMinConfluence, InpMaxEntryPastZoneATR);
+   else
+      PrintFormat("Tradie D-20: entry=AT_POI (option A, legacy) | OB=%s FVG=%s",
+                  (InpRequireOB ? "required" : "off"), (InpRequireFVG ? "required" : "off"));
 
    //--- D-18 / D-19 wiring (order matters: realised P&L first, then anchors)
    g_gvLastLoss = StringFormat("TRADIE_LASTLOSS_%I64d", InpMagic);
@@ -1739,6 +1894,13 @@ void OnDeinit(const int reason)
                g_evaluations, g_rejections, g_eaRealized,
                StageLossPct(g_soft), g_soft.refCapital,
                StageLossPct(g_hard), g_hard.refCapital, g_why);
+
+   int tot = g_conf[0] + g_conf[1] + g_conf[2] + g_conf[3];
+   if(tot > 0)
+      PrintFormat("Tradie D-20: conf0=%d conf1=%d conf2=%d conf3=%d | signals by score: %d/%d/%d/%d | mode=%s minConf=%d",
+                  g_conf[0], g_conf[1], g_conf[2], g_conf[3],
+                  g_confSigs[0], g_confSigs[1], g_confSigs[2], g_confSigs[3],
+                  (InpEntryMode == ENTRY_AT_ZONE ? "zone" : "poi"), InpMinConfluence);
    Comment("");
   }
 

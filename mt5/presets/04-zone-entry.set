@@ -1,0 +1,72 @@
+; Tradie RUN D - D-20 option B: entry AT the 50% zone, POI demoted to a score
+; EURUSDm M15, dry run. Identical to RUN A (ER 0.20, MinSL 12) except:
+;   InpEntryMode            0 = ENTRY_AT_ZONE   (was implicitly 1 = at POI)
+;   InpMinConfluence        0 = no gate; measures the full signal population
+;   InpMaxSLATR             3.0 -> 6.0  - REQUIRED, not tuning. With the entry
+;                           mid-leg the stop spans zone -> sweep extreme (~half
+;                           the leg), so the old 3.0xATR cap would strangle the
+;                           very trades this change exists to create.
+; Compare signal count against RUN A (14 signals / 5y).
+; Witness lines in the Experts log:
+;   Tradie D-20: entry=AT_ZONE (option B) ...
+;   Tradie D-20: conf0=.. conf1=.. conf2=.. conf3=.. | signals by score: ...
+; 
+InpMagic=20261025
+InpSizingMode=0
+InpFixedLots=0.01
+InpRiskPercent=0.75
+InpSoftLossPct=15.0
+InpSoftHours=24
+InpSoftEnabled=true
+InpCooldownLossPct=35.0
+InpCooldownHours=168
+InpCooldownFlatten=true
+InpCooldownReset=false
+InpCooldownReanchor=true
+InpLossCooldownMin=30
+InpRewardRisk=3.0
+InpMinSLPips=12.0
+InpMaxSLATR=6.0
+InpSLBufferATR=0.15
+InpSLBufferSpread=1.5
+InpMaxConcurrent=2
+InpDailyTradeCap=3
+InpSessionFilter=true
+InpSessionStartUTC=7
+InpSessionEndUTC=16
+InpAutoGMTOffset=true
+InpGMTOffsetHours=2
+InpFridayFlatten=true
+InpFridayFlattenUTC=20
+InpBiasTF=16408
+InpBiasSwingLeft=3
+InpBiasSwingRight=3
+InpSweepLookback=48
+InpSweepFreshness=8
+InpPenetrationMinATR=0.05
+InpPenetrationMaxATR=0.60
+InpReclaimBars=2
+InpUsePriorDayLevel=true
+InpStructureTF=16385
+InpERBars=20
+InpERMin=0.20
+InpMaxSwingDensity=6
+InpMinRangeATR=2.0
+InpMSSSwing=2
+InpMSSMaxBars=24
+InpMSSDisplacementATR=0.5
+InpRetraceAnchor=0
+InpZoneLow=0.45
+InpZoneHigh=0.55
+InpSetupTTLBars=96
+InpEntryMode=0
+InpMinConfluence=0
+InpMaxEntryPastZoneATR=0.50
+InpRequireOB=true
+InpRequireFVG=true
+InpRequireZoneTouch=true
+InpMinBodyRatio=0.50
+InpMaxSpreadPoints=0.0
+InpSlippagePoints=20
+InpBarsM15=250
+InpDryRun=true
