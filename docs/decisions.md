@@ -276,6 +276,17 @@ Two defects were found in the implementation, both mine:
 
 The zone width stays at 45–55%: the median miss is 13.9 pips, and widening enough to matter would stop it being a 50% retracement.
 
+### D-20 first real-tick result (2026-10-25)
+
+`mt5/results/2026-10-25-run-g-realtick.md`. Real orders, real ticks (from 2024.08.16; generated before that), D-08 enforced: **18 trades, −4.39 (−0.88%)**, 15 stops / 2 targets / 1 Friday flatten.
+
+- **D-08 fix verified:** `conf=1` signals went 13 → **0**. The bucket is empty, as intended.
+- **Not significant:** −0.48R/trade, 95% CI **[−1.13R, +0.17R]**. Includes zero, so it is consistent with break-even and with a good system. n=18; ~34 trades needed for a first verdict on this pair alone.
+- **One trade carries it:** +18.25 from a single 182.5-pip winner; the other 17 trades total −22.64.
+- **Execution is sound:** average loss −1.01R on real ticks. Post-loss cooldown fired 15/15.
+
+**Live frequency is 3.6/yr/pair, not the 7.8 measured in the dry run.** Two causes: D-08 removed 13 signals, and position-blocking removed 4 (a setup firing while a trade is open is not tradeable, but a dry run counts it). **The 2.4-year estimate after RUN D is therefore wrong; the honest figure is 4.6 years across 12 pairs.**
+
 ### How this is being tested
 
 Two presets that differ in **exactly two fields**:

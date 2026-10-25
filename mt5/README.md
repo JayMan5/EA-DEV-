@@ -210,6 +210,12 @@ If the first line says `entry=AT_POI` the preset did not apply. The second line 
 
 **One thing that may get worse, and is worth watching:** the target is 3× the stop, and the stop is now much wider (zone → sweep extreme, roughly half the leg). So the profit target sits further away in pips than it used to. Expect a **lower hit rate at the same 1:3**. If it collapses to near zero, the thing to question is the fixed 1:3 (D-09), not this change.
 
+### RUN G — DONE (2026-10-25)
+
+Result: **18 trades, −4.39 (−0.88%)** on real ticks. Full analysis in [`results/2026-10-25-run-g-realtick.md`](results/2026-10-25-run-g-realtick.md).
+
+Key read: the result is **not statistically significant** (95% CI −1.13R to +0.17R includes zero), and **live frequency is 3.6 trades/yr/pair** — half what the dry run suggested. Next step is the other 11 pairs, not more EURUSD.
+
 ### RUN G — real orders on the zone build (2026-10-25)
 
 **This replaces RUN B.** `06-realrun-zone.set` is `04-zone-entry.set` with `InpDryRun=false`, plus `InpZoneRequireOBFVG=true`.
